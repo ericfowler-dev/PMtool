@@ -1,0 +1,1160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PSI Generator Service Planning Dashboard</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            color: white;
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 2.5em;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
+        }
+        
+        .control-panel {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            backdrop-filter: blur(10px);
+        }
+        
+        .control-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 25px;
+        }
+        
+        .service-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+        
+        .service-card {
+            background: white;
+            border-radius: 12px;
+            padding: 15px;
+            border: 2px solid #e0e0e0;
+            transition: all 0.3s ease;
+            display: none;
+        }
+        
+        .service-card.visible {
+            display: block;
+        }
+        
+        .service-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        }
+        
+        .service-card.disabled {
+            opacity: 0.5;
+            background: #f5f5f5;
+        }
+        
+        .service-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #e0e0e0;
+        }
+        
+        .service-title {
+            font-weight: 600;
+            color: #333;
+            font-size: 1em;
+        }
+        
+        .switch-container {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .switch {
+            position: relative;
+            width: 48px;
+            height: 24px;
+        }
+        
+        .switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #ccc;
+            transition: .4s;
+            border-radius: 24px;
+        }
+        
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 18px;
+            width: 18px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: .4s;
+            border-radius: 50%;
+        }
+        
+        input:checked + .slider {
+            background-color: #667eea;
+        }
+        
+        input:checked + .slider:before {
+            transform: translateX(24px);
+        }
+        
+        .service-inputs {
+            display: grid;
+            grid-template-columns: 1fr; 
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+        
+        .input-group {
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .input-group label {
+            font-size: 0.85em;
+            color: #555;
+            margin-bottom: 5px;
+            font-weight: 500;
+        }
+        
+        .input-group input, .input-group select {
+            padding: 8px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: all 0.3s ease;
+        }
+        
+        .input-group input:focus, .input-group select:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+        
+        .input-group input:disabled {
+            background: #f0f0f0;
+            cursor: not-allowed;
+        }
+        
+        .input-group small {
+            margin-top: 5px;
+            color: #888;
+            font-size: 0.75em;
+        }
+        
+        .service-stats {
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            font-size: 0.85em;
+        }
+        
+        .stat-item {
+            display: flex;
+            justify-content: space-between;
+            margin: 5px 0;
+        }
+        
+        .stat-label {
+            color: #666;
+        }
+        
+        .stat-value {
+            font-weight: 600;
+            color: #333;
+        }
+        
+        h2 {
+            color: #333;
+            margin-bottom: 20px;
+            font-size: 1.5em;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #e0e0e0;
+        }
+        
+        h3 {
+            color: #555;
+            margin: 20px 0 15px 0;
+            font-size: 1.2em;
+        }
+        
+        .btn-container {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        
+        .btn {
+            flex: 1;
+            min-width: 150px;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+        
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+        
+        .btn-secondary:hover {
+            background: #5a6268;
+        }
+        
+        .scenario-buttons {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        
+        .scenario-btn {
+            flex: 1;
+            min-width: 120px;
+            padding: 10px;
+            background: #f8f9fa;
+            border: 2px solid #dee2e6;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-align: center;
+        }
+        
+        .scenario-btn:hover {
+            background: #e9ecef;
+            border-color: #667eea;
+        }
+        
+        .scenario-btn.active {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-color: #667eea;
+        }
+        
+        .scenario-title {
+            font-weight: 600;
+            font-size: 0.9em;
+            margin-bottom: 3px;
+        }
+        
+        .scenario-desc {
+            font-size: 0.75em;
+            opacity: 0.8;
+        }
+        
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .metric-card {
+            background: white;
+            padding: 25px;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+            text-align: center;
+            transition: transform 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .metric-card:hover {
+            transform: translateY(-5px);
+        }
+        
+        .metric-card.primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        .metric-card.success {
+            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+            color: white;
+        }
+        
+        .metric-card.warning {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+        }
+        
+        .metric-card.info {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white;
+        }
+        
+        .metric-value {
+            font-size: 2.5em;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        
+        .metric-label {
+            font-size: 0.9em;
+            opacity: 0.9;
+        }
+        
+        .metric-detail {
+            font-size: 0.8em;
+            opacity: 0.8;
+            margin-top: 5px;
+        }
+        
+        .chart-container {
+            background: white;
+            border-radius: 20px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+        }
+        
+        .chart-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            margin-bottom: 30px;
+        }
+        
+        @media (max-width: 1200px) {
+            .chart-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+        
+        canvas {
+            max-height: 400px;
+        }
+        
+        .table-container {
+            background: white;
+            border-radius: 20px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow-x: auto;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        th {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 12px;
+            text-align: left;
+            font-weight: 600;
+        }
+        
+        td {
+            padding: 10px 12px;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        
+        tr:hover {
+            background: #f8f9fa;
+        }
+        
+        tr.disabled {
+            opacity: 0.4;
+            background: #f5f5f5;
+        }
+        
+        tr.total-row {
+            background: #e8f4f8;
+            font-weight: 600;
+        }
+        
+        .savings-alert {
+            background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%);
+            border-left: 5px solid #28a745;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 30px;
+            display: none;
+        }
+        
+        .savings-alert.show {
+            display: block;
+        }
+        
+        .savings-value {
+            font-size: 1.5em;
+            font-weight: bold;
+            color: #155724;
+            margin-bottom: 10px;
+        }
+        
+        .savings-details {
+            color: #155724;
+            opacity: 0.9;
+        }
+        
+        .product-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 0.75em;
+            font-weight: 600;
+            margin-left: 8px;
+        }
+        
+        .badge-standby {
+            background: #ffc107;
+            color: #000;
+        }
+        
+        .badge-prime {
+            background: #28a745;
+            color: white;
+        }
+        
+        .badge-ltp {
+            background: #dc3545;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔧 PSI Generator Service Planning Dashboard</h1>
+        
+        <div class="control-panel">
+            <h2>Configuration Parameters</h2>
+            
+            <h3>Product & Fleet Configuration</h3>
+            <div class="control-grid">
+                <div class="input-group">
+                    <label>Product Type</label>
+                    <select id="productType">
+                        <option value="standby">Standby (Emergency Backup)</option>
+                        <option value="prime" selected>Prime (Primary Power)</option>
+                        <option value="ltp">LTP (Limited Time Power)</option>
+                    </select>
+                    <small>Application type affects runtime & intervals</small>
+                </div>
+                <div class="input-group">
+                    <label>Total Fleet Size</label>
+                    <input type="number" id="totalUnits" value="1000" min="1">
+                    <small>Target number of units</small>
+                </div>
+                <div class="input-group">
+                    <label>Units per Month</label>
+                    <input type="number" id="unitsPerMonth" value="50" min="1">
+                    <small>Commissioning rate</small>
+                </div>
+                <div class="input-group">
+                    <label>Annual Runtime (hrs)</label>
+                    <input type="number" id="annualRuntime" value="6500" min="1">
+                    <small>Hours per year per unit</small>
+                </div>
+                <div class="input-group">
+                    <label>Working Days/Year</label>
+                    <input type="number" id="workingDays" value="250" min="200" max="365">
+                    <small>Excluding weekends/holidays</small>
+                </div>
+                <div class="input-group">
+                    <label>Hours per Day</label>
+                    <input type="number" id="hoursPerDay" value="8" min="1" max="24">
+                    <small>Standard shift</small>
+                </div>
+                <div class="input-group">
+                    <label>Target Utilization (%)</label>
+                    <input type="number" id="targetUtilization" value="75" min="50" max="95">
+                    <small>Productive time</small>
+                </div>
+            </div>
+            
+            <h3>Labor & Parts Pricing</h3>
+            <div class="control-grid">
+                <div class="input-group">
+                    <label>Labor Rate ($/hr)</label>
+                    <input type="number" id="laborRate" value="120" min="50" max="300" step="5">
+                    <small>Loaded technician cost</small>
+                </div>
+                <div class="input-group">
+                    <label>Parts Discount Level</label>
+                    <select id="partsDiscount">
+                        <option value="0">List Price (0%)</option>
+                        <option value="10">-10% Discount</option>
+                        <option value="20" selected>-20% Discount</option>
+                        <option value="30">-30% Discount</option>
+                        <option value="40">-40% Discount</option>
+                        <option value="50">-50% Discount</option>
+                    </select>
+                    <small>Standard parts discount</small>
+                </div>
+                <div class="input-group">
+                    <label>Overhead & Markup (%)</label>
+                    <input type="number" id="overheadPercent" value="15" min="0" max="50" step="5">
+                    <small>Additional costs & profit</small>
+                </div>
+            </div>
+            
+            <div id="partsConfigSection"></div>
+            
+            <h3>Service Interval Presets</h3>
+            <div class="scenario-buttons">
+                <div class="scenario-btn active" id="preset-oem">
+                    <div class="scenario-title">OEM Baseline</div>
+                    <div class="scenario-desc">Standard intervals</div>
+                </div>
+                <div class="scenario-btn" id="preset-optimized">
+                    <div class="scenario-title">Optimized</div>
+                    <div class="scenario-desc">+30% extension</div>
+                </div>
+                <div class="scenario-btn" id="preset-aggressive">
+                    <div class="scenario-title">Aggressive</div>
+                    <div class="scenario-desc">Maximum extension</div>
+                </div>
+            </div>
+            
+            <h3>Service Intervals - Full Control <span id="productBadge"></span></h3>
+            <div class="service-grid" id="serviceCardsContainer"></div>
+            
+            <div class="btn-container">
+                <button class="btn btn-primary" onclick="calculatePlan()">Calculate Plan</button>
+                <button class="btn btn-secondary" onclick="resetDefaults()">Reset to OEM</button>
+            </div>
+        </div>
+        
+        <div id="savingsAlert" class="savings-alert">
+            <div class="savings-value">💰 Total Savings: <span id="savingsAmount">$0M</span> Annually</div>
+            <div class="savings-details" id="savingsDetails"></div>
+        </div>
+        
+        <div class="metrics-grid">
+            <div class="metric-card primary">
+                <div class="metric-value" id="techsRequired">0</div>
+                <div class="metric-label">Technicians Required</div>
+                <div class="metric-detail" id="techDetail"></div>
+            </div>
+            <div class="metric-card success">
+                <div class="metric-value" id="annualServices">0</div>
+                <div class="metric-label">Annual Services</div>
+                <div class="metric-detail" id="serviceDetail"></div>
+            </div>
+            <div class="metric-card info">
+                <div class="metric-value" id="totalHours">0</div>
+                <div class="metric-label">Total Labor Hours</div>
+                <div class="metric-detail" id="hoursDetail"></div>
+            </div>
+            <div class="metric-card warning">
+                <div class="metric-value" id="totalCost">$0M</div>
+                <div class="metric-label">Annual O&M Cost</div>
+                <div class="metric-detail" id="costDetail"></div>
+            </div>
+        </div>
+        
+        <div class="chart-grid">
+            <div class="chart-container">
+                <h3>Service Distribution</h3>
+                <canvas id="serviceChart"></canvas>
+            </div>
+            <div class="chart-container">
+                <h3>Labor Hours by Service Type</h3>
+                <canvas id="laborChart"></canvas>
+            </div>
+        </div>
+        
+        <div class="chart-container">
+            <h3>Technician Requirements Over Time</h3>
+            <canvas id="staffingChart"></canvas>
+        </div>
+        
+        <div class="table-container">
+            <h3>Service Schedule Summary</h3>
+            <table id="summaryTable">
+                <thead>
+                    <tr>
+                        <th>Service Type</th>
+                        <th>Status</th>
+                        <th>Interval (hrs)</th>
+                        <th>Services/Year</th>
+                        <th>Labor hrs/Service</th>
+                        <th>Total Labor Hours</th>
+                        <th>Parts Cost/Service</th>
+                        <th>Total Parts Cost</th>
+                        <th>% of Workload</th>
+                    </tr>
+                </thead>
+                <tbody id="summaryTableBody">
+                </tbody>
+            </table>
+        </div>
+    </div>
+    
+    <script>
+        let serviceChart, laborChart, staffingChart;
+        let baselineData = {
+            techs: 124,
+            services: 37357,
+            hours: 241749,
+            cost: 29400000
+        };
+        
+        // Service interval configurations by product type
+        const serviceConfigs = {
+            standby: {
+                runtime: 150,
+                services: [
+                    {id: 'initial', name: 'Initial 50 Hour', interval: 50, hours: 17.2, parts: 200, oneTime: true, enabled: true, locked: true},
+                    {id: '500', name: '500 Hour/Annual', interval: 500, hours: 8.5, parts: 800, enabled: true},
+                    {id: '1000', name: '1,000 Hour/2-Year', interval: 1000, hours: 12.0, parts: 1200, enabled: true}
+                ]
+            },
+            prime: {
+                runtime: 6500,
+                services: [
+                    {id: 'initial', name: 'Initial 50 Hour', interval: 50, hours: 17.2, parts: 200, oneTime: true, enabled: true, locked: true},
+                    {id: 'daily', name: 'Daily Checks', interval: 24, hours: 0.9, parts: 0, automated: true, enabled: false},
+                    {id: '250', name: '250 Hour', interval: 250, hours: 0.9, parts: 150, enabled: true},
+                    {id: '750', name: '750 Hour', interval: 750, hours: 14.7, parts: 800, enabled: true},
+                    {id: '8760', name: '8,760 Hour (Annual)', interval: 8760, hours: 10.7, parts: 600, enabled: true, locked: true},
+                    {id: '24000', name: '24,000 Hour (Top End)', interval: 24000, hours: 82.7, parts: 15000, enabled: true},
+                    {id: '48000', name: '48,000 Hour (Overhaul)', interval: 48000, hours: 182, parts: 35000, enabled: true}
+                ]
+            },
+            ltp: {
+                runtime: 8000,
+                services: [
+                    {id: 'initial', name: 'Initial 50 Hour', interval: 50, hours: 17.2, parts: 200, oneTime: true, enabled: true, locked: true},
+                    {id: 'daily', name: 'Daily Checks', interval: 24, hours: 0.9, parts: 0, automated: true, enabled: false},
+                    {id: '250', name: '250 Hour', interval: 250, hours: 0.9, parts: 150, enabled: true},
+                    {id: '750', name: '750 Hour', interval: 750, hours: 14.7, parts: 800, enabled: true},
+                    {id: '8760', name: '8,760 Hour (Annual)', interval: 8760, hours: 10.7, parts: 600, enabled: true, locked: true},
+                    {id: '24000', name: '24,000 Hour (Top End)', interval: 24000, hours: 82.7, parts: 15000, enabled: true},
+                    {id: '48000', name: '48,000 Hour (Overhaul)', interval: 48000, hours: 182, parts: 35000, enabled: true}
+                ]
+            }
+        };
+        
+        // Initialize charts
+        function initCharts() {
+            serviceChart = new Chart(document.getElementById('serviceChart'), {
+                type: 'doughnut',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        data: [],
+                        backgroundColor: [
+                            '#667eea', '#764ba2', '#f093fb', '#f5576c',
+                            '#4facfe', '#00f2fe', '#43e97b', '#38f9d7'
+                        ]
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'bottom'
+                        }
+                    }
+                }
+            });
+            
+            laborChart = new Chart(document.getElementById('laborChart'), {
+                type: 'bar',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Labor Hours',
+                        data: [],
+                        backgroundColor: '#667eea'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            beginAtZero: true
+                        }
+                    }
+                }
+            });
+            
+            staffingChart = new Chart(document.getElementById('staffingChart'), {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Technicians Required',
+                        data: [],
+                        borderColor: '#667eea',
+                        backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                        tension: 0.3
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            beginAtZero: true
+                        }
+                    }
+                }
+            });
+        }
+        
+        // Build service cards dynamically
+        function buildServiceCards() {
+            const productType = document.getElementById('productType').value;
+            const config = serviceConfigs[productType];
+            const container = document.getElementById('serviceCardsContainer');
+            const partsSection = document.getElementById('partsConfigSection');
+            
+            // Update badge
+            const badge = document.getElementById('productBadge');
+            const badgeClasses = {
+                standby: 'badge-standby',
+                prime: 'badge-prime',
+                ltp: 'badge-ltp'
+            };
+            badge.className = `product-badge ${badgeClasses[productType]}`;
+            badge.textContent = productType.toUpperCase();
+            
+            // Build parts pricing section
+            let partsHTML = '<h3>Standard Parts Pricing (List Price)</h3><div class="control-grid">';
+            config.services.forEach(service => {
+                if (!service.automated) {
+                    partsHTML += `
+                        <div class="input-group">
+                            <label>${service.name} Parts ($)</label>
+                            <input type="number" id="partsCost-${service.id}" value="${service.parts}" min="0" step="10">
+                            <small>List price for parts</small>
+                        </div>
+                    `;
+                }
+            });
+            partsHTML += '</div>';
+            partsSection.innerHTML = partsHTML;
+            
+            // Build service cards
+            container.innerHTML = '';
+            config.services.forEach(service => {
+                const card = document.createElement('div');
+                card.className = `service-card visible ${service.enabled ? '' : 'disabled'}`;
+                card.id = `card-${service.id}`;
+                
+                const intervalDisabled = service.locked || service.automated ? 'disabled' : '';
+                const hoursDisabled = service.automated ? 'disabled' : '';
+                
+                card.innerHTML = `
+                    <div class="service-header">
+                        <span class="service-title">${service.name}</span>
+                        <div class="switch-container">
+                            <span style="font-size: 0.8em;">Enable</span>
+                            <label class="switch">
+                                <input type="checkbox" id="enable-${service.id}" ${service.enabled ? 'checked' : ''} ${service.automated ? 'disabled' : ''}>
+                                <span class="slider"></span>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="service-inputs">
+                        <div class="input-group">
+                            <label>Interval (hrs)</label>
+                            <input type="number" id="interval-${service.id}" value="${service.interval}" min="50" step="50" ${intervalDisabled}>
+                        </div>
+                        <div class="input-group">
+                            <label>Labor (hrs)</label>
+                            <input type="number" id="hours-${service.id}" value="${service.hours}" step="0.1" ${hoursDisabled}>
+                        </div>
+                    </div>
+                    <div class="service-stats">
+                        ${service.oneTime ? `
+                            <div class="stat-item">
+                                <span class="stat-label">Type:</span>
+                                <span class="stat-value">One-time</span>
+                            </div>
+                        ` : ''}
+                        ${service.automated ? `
+                            <div class="stat-item">
+                                <span class="stat-label">Status:</span>
+                                <span class="stat-value" style="color: #28a745;">AUTOMATED</span>
+                            </div>
+                            <div class="stat-item">
+                                <span class="stat-label">Method:</span>
+                                <span class="stat-value">Sensors</span>
+                            </div>
+                        ` : `
+                            <div class="stat-item">
+                                <span class="stat-label">Services/Year:</span>
+                                <span class="stat-value" id="stat-${service.id}">0</span>
+                            </div>
+                            <div class="stat-item">
+                                <span class="stat-label">Total Hours:</span>
+                                <span class="stat-value" id="stat-${service.id}-hours">0</span>
+                            </div>
+                        `}
+                    </div>
+                `;
+                
+                container.appendChild(card);
+                
+                // Add event listener
+                const checkbox = card.querySelector(`#enable-${service.id}`);
+                if (checkbox && !service.automated) {
+                    checkbox.addEventListener('change', function() {
+                        toggleService(service.id);
+                        calculatePlan();
+                    });
+                }
+            });
+        }
+        
+        // Handle product type changes
+        function updateProductType() {
+            const productType = document.getElementById('productType').value;
+            const runtimeInput = document.getElementById('annualRuntime');
+            
+            runtimeInput.value = serviceConfigs[productType].runtime;
+            buildServiceCards();
+            calculatePlan();
+        }
+        
+        // Toggle service interval
+        function toggleService(serviceId) {
+            const checkbox = document.getElementById(`enable-${serviceId}`);
+            const card = document.getElementById(`card-${serviceId}`);
+            const intervalInput = document.getElementById(`interval-${serviceId}`);
+            const hoursInput = document.getElementById(`hours-${serviceId}`);
+            
+            if (checkbox && card) {
+                if (checkbox.checked) {
+                    card.classList.remove('disabled');
+                    if (intervalInput && !intervalInput.disabled) {
+                        intervalInput.disabled = false;
+                    }
+                    if (hoursInput && !hoursInput.disabled) {
+                        hoursInput.disabled = false;
+                    }
+                } else {
+                    card.classList.add('disabled');
+                }
+            }
+        }
+        
+        // Calculate the service plan
+        function calculatePlan() {
+            const productType = document.getElementById('productType').value;
+            const config = serviceConfigs[productType];
+            const totalUnits = parseInt(document.getElementById('totalUnits').value);
+            const unitsPerMonth = parseInt(document.getElementById('unitsPerMonth').value);
+            const annualRuntime = parseInt(document.getElementById('annualRuntime').value);
+            const workingDays = parseInt(document.getElementById('workingDays').value);
+            const hoursPerDay = parseInt(document.getElementById('hoursPerDay').value);
+            const utilization = parseInt(document.getElementById('targetUtilization').value) / 100;
+            const laborRate = parseFloat(document.getElementById('laborRate').value);
+            const partsDiscount = parseFloat(document.getElementById('partsDiscount').value) / 100;
+            const overheadPercent = parseFloat(document.getElementById('overheadPercent').value) / 100;
+            
+            let totalServices = 0;
+            let totalLaborHours = 0;
+            let totalLaborCost = 0;
+            let totalPartsCost = 0;
+            const serviceData = [];
+            const laborData = [];
+            
+            let tableHTML = '';
+            
+            config.services.forEach(service => {
+                const enabledCheckbox = document.getElementById(`enable-${service.id}`);
+                const enabled = enabledCheckbox ? enabledCheckbox.checked : service.enabled;
+                
+                let servicesPerYear = 0;
+                let hoursPerYear = 0;
+                let laborCostPerYear = 0;
+                let partsCostPerYear = 0;
+                let interval = parseInt(document.getElementById(`interval-${service.id}`).value);
+                let laborHours = parseFloat(document.getElementById(`hours-${service.id}`).value);
+                
+                let partsPerService = 0;
+                const partsCostInput = document.getElementById(`partsCost-${service.id}`);
+                if (partsCostInput) {
+                    partsPerService = parseFloat(partsCostInput.value) * (1 - partsDiscount);
+                }
+                
+                if (service.automated) {
+                    servicesPerYear = Math.round(totalUnits * annualRuntime / (interval || 24));
+                    hoursPerYear = 0;
+                    laborCostPerYear = 0;
+                    partsCostPerYear = 0;
+                } else if (enabled) {
+                    if (service.oneTime) {
+                        servicesPerYear = totalUnits;
+                        hoursPerYear = (totalUnits * laborHours) / 3;
+                        laborCostPerYear = hoursPerYear * laborRate;
+                        partsCostPerYear = (totalUnits * partsPerService) / 3;
+                    } else {
+                        servicesPerYear = Math.round(totalUnits * annualRuntime / interval);
+                        hoursPerYear = servicesPerYear * laborHours;
+                        laborCostPerYear = hoursPerYear * laborRate;
+                        partsCostPerYear = servicesPerYear * partsPerService;
+                    }
+                    
+                    totalServices += servicesPerYear;
+                    totalLaborHours += hoursPerYear;
+                    totalLaborCost += laborCostPerYear;
+                    totalPartsCost += partsCostPerYear;
+                    
+                    serviceData.push({name: service.name, value: servicesPerYear});
+                    laborData.push({name: service.name, value: hoursPerYear});
+                }
+                
+                const statElement = document.getElementById(`stat-${service.id}`);
+                if (statElement) {
+                    statElement.textContent = servicesPerYear.toLocaleString();
+                }
+                const hoursElement = document.getElementById(`stat-${service.id}-hours`);
+                if (hoursElement) {
+                    hoursElement.textContent = Math.round(hoursPerYear).toLocaleString();
+                }
+                
+                if (service.automated) {
+                    tableHTML += `
+                        <tr class="disabled">
+                            <td>${service.name}</td>
+                            <td>🤖 Automated</td>
+                            <td>${interval || 24}</td>
+                            <td>${servicesPerYear.toLocaleString()}</td>
+                            <td>${laborHours}</td>
+                            <td>0</td>
+                            <td>$0</td>
+                            <td>$0</td>
+                            <td>0%</td>
+                        </tr>
+                    `;
+                } else if (enabled) {
+                    const percentage = totalLaborHours > 0 ? (hoursPerYear / totalLaborHours * 100).toFixed(1) : '0.0';
+                    tableHTML += `
+                        <tr>
+                            <td>${service.name}</td>
+                            <td>✅ Active</td>
+                            <td>${interval.toLocaleString()}</td>
+                            <td>${servicesPerYear.toLocaleString()}</td>
+                            <td>${laborHours}</td>
+                            <td>${Math.round(hoursPerYear).toLocaleString()}</td>
+                            <td>$${Math.round(partsPerService).toLocaleString()}</td>
+                            <td>$${Math.round(partsCostPerYear).toLocaleString()}</td>
+                            <td>${percentage}%</td>
+                        </tr>
+                    `;
+                } else {
+                    tableHTML += `
+                        <tr class="disabled">
+                            <td>${service.name}</td>
+                            <td>❌ Disabled</td>
+                            <td>-</td>
+                            <td>-</td>
+                            <td>-</td>
+                            <td>-</td>
+                            <td>-</td>
+                            <td>-</td>
+                            <td>-</td>
+                        </tr>
+                    `;
+                }
+            });
+            
+            tableHTML += `
+                <tr class="total-row">
+                    <td><strong>TOTAL</strong></td>
+                    <td><strong>-</strong></td>
+                    <td><strong>-</strong></td>
+                    <td><strong>${totalServices.toLocaleString()}</strong></td>
+                    <td><strong>-</strong></td>
+                    <td><strong>${Math.round(totalLaborHours).toLocaleString()}</strong></td>
+                    <td><strong>-</strong></td>
+                    <td><strong>$${Math.round(totalPartsCost).toLocaleString()}</strong></td>
+                    <td><strong>100%</strong></td>
+                </tr>
+            `;
+            
+            document.getElementById('summaryTableBody').innerHTML = tableHTML;
+            
+            const availableHours = workingDays * hoursPerDay * utilization;
+            const techsRequired = Math.ceil(totalLaborHours / availableHours * 1.15);
+            
+            const totalOMCost = (totalLaborCost + totalPartsCost) * (1 + overheadPercent);
+            
+            const techSavings = baselineData.techs - techsRequired;
+            const hoursSavings = baselineData.hours - totalLaborHours;
+            const costSavings = baselineData.cost - totalOMCost;
+            
+            document.getElementById('techsRequired').textContent = techsRequired;
+            document.getElementById('annualServices').textContent = totalServices.toLocaleString();
+            document.getElementById('totalHours').textContent = Math.round(totalLaborHours).toLocaleString();
+            document.getElementById('totalCost').textContent = `$${(totalOMCost / 1000000).toFixed(1)}M`;
+            
+            const partsDiscountPercent = parseFloat(document.getElementById('partsDiscount').value);
+            document.getElementById('techDetail').textContent = techSavings > 0 ? 
+                `${techSavings} fewer than baseline` : (techSavings < 0 ? `${Math.abs(techSavings)} more than baseline` : 'At baseline');
+            document.getElementById('hoursDetail').textContent = hoursSavings > 0 ? 
+                `${Math.round(hoursSavings).toLocaleString()} hrs saved` : (hoursSavings < 0 ? `${Math.round(Math.abs(hoursSavings)).toLocaleString()} hrs increase` : 'At baseline');
+            document.getElementById('costDetail').textContent = 
+                `Labor: $${(totalLaborCost / 1000000).toFixed(1)}M | Parts: $${(totalPartsCost / 1000000).toFixed(1)}M (${partsDiscountPercent}% disc)`;
+            
+            if (costSavings > 1000000) {
+                document.getElementById('savingsAlert').classList.add('show');
+                document.getElementById('savingsAmount').textContent = `$${(costSavings / 1000000).toFixed(1)}M`;
+                document.getElementById('savingsDetails').textContent = 
+                    `${techSavings} fewer technicians | ${Math.round(hoursSavings).toLocaleString()} fewer labor hours | Labor: $${(totalLaborCost / 1000000).toFixed(1)}M | Parts: $${(totalPartsCost / 1000000).toFixed(1)}M`;
+            } else {
+                document.getElementById('savingsAlert').classList.remove('show');
+            }
+            
+            serviceChart.data.labels = serviceData.map(d => d.name);
+            serviceChart.data.datasets[0].data = serviceData.map(d => d.value);
+            serviceChart.update();
+            
+            laborChart.data.labels = laborData.map(d => d.name);
+            laborChart.data.datasets[0].data = laborData.map(d => Math.round(d.value));
+            laborChart.update();
+            
+            const months = Math.ceil(totalUnits / unitsPerMonth);
+            const monthLabels = [];
+            const techData = [];
+            
+            for (let i = 1; i <= Math.min(24, months + 6); i++) {
+                monthLabels.push(`Month ${i}`);
+                const unitsActive = Math.min(totalUnits, unitsPerMonth * i);
+                const proportionalTechs = Math.ceil((unitsActive / totalUnits) * techsRequired);
+                techData.push(proportionalTechs);
+            }
+            
+            staffingChart.data.labels = monthLabels;
+            staffingChart.data.datasets[0].data = techData;
+            staffingChart.update();
+        }
+        
+        function loadPreset(preset) {
+            const productType = document.getElementById('productType').value;
+            const config = serviceConfigs[productType];
+            
+            const multipliers = {
+                oem: 1.0,
+                optimized: 1.3,
+                aggressive: 1.6
+            };
+            
+            const mult = multipliers[preset];
+            
+            config.services.forEach(service => {
+                if (!service.locked && !service.automated && !service.oneTime) {
+                    const intervalInput = document.getElementById(`interval-${service.id}`);
+                    if (intervalInput) {
+                        intervalInput.value = Math.round(service.interval * mult);
+                    }
+                }
+            });
+            
+            calculatePlan();
+        }
+        
+        function resetDefaults() {
+            loadPreset('oem');
+        }
+        
+        document.addEventListener('DOMContentLoaded', function() {
+            initCharts();
+            buildServiceCards();
+            
+            document.getElementById('productType').addEventListener('change', updateProductType);
+            
+            document.getElementById('preset-oem').addEventListener('click', function() {
+                document.querySelectorAll('.scenario-btn').forEach(btn => btn.classList.remove('active'));
+                this.classList.add('active');
+                loadPreset('oem');
+            });
+            
+            document.getElementById('preset-optimized').addEventListener('click', function() {
+                document.querySelectorAll('.scenario-btn').forEach(btn => btn.classList.remove('active'));
+                this.classList.add('active');
+                loadPreset('optimized');
+            });
+            
+            document.getElementById('preset-aggressive').addEventListener('click', function() {
+                document.querySelectorAll('.scenario-btn').forEach(btn => btn.classList.remove('active'));
+                this.classList.add('active');
+                loadPreset('aggressive');
+            });
+            
+            document.querySelectorAll('input[type="number"]').forEach(input => {
+                input.addEventListener('change', calculatePlan);
+            });
+            
+            document.querySelectorAll('select').forEach(select => {
+                if (select.id !== 'productType') {
+                    select.addEventListener('change', calculatePlan);
+                }
+            });
+            
+            calculatePlan();
+        });
+    </script>
+</body>
+</html>
