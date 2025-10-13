@@ -354,12 +354,6 @@
             opacity: 0.9;
         }
         
-        .metric-detail {
-            font-size: 0.8em;
-            opacity: 0.8;
-            margin-top: 5px;
-        }
-        
         .chart-container {
             background: white;
             border-radius: 20px;
@@ -426,31 +420,6 @@
             font-weight: 600;
         }
         
-        .savings-alert {
-            background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%);
-            border-left: 5px solid #28a745;
-            border-radius: 10px;
-            padding: 20px;
-            margin-bottom: 30px;
-            display: none;
-        }
-        
-        .savings-alert.show {
-            display: block;
-        }
-        
-        .savings-value {
-            font-size: 1.5em;
-            font-weight: bold;
-            color: #155724;
-            margin-bottom: 10px;
-        }
-        
-        .savings-details {
-            color: #155724;
-            opacity: 0.9;
-        }
-        
         .product-badge {
             display: inline-block;
             padding: 4px 12px;
@@ -496,12 +465,12 @@
                 </div>
                 <div class="input-group">
                     <label>Total Fleet Size</label>
-                    <input type="number" id="totalUnits" value="1000" min="1">
+                    <input type="number" id="totalUnits" value="1" min="1">
                     <small>Target number of units</small>
                 </div>
                 <div class="input-group">
                     <label>Units per Month</label>
-                    <input type="number" id="unitsPerMonth" value="50" min="1">
+                    <input type="number" id="unitsPerMonth" value="0" min="0">
                     <small>Commissioning rate</small>
                 </div>
                 <div class="input-group">
@@ -579,31 +548,22 @@
             </div>
         </div>
         
-        <div id="savingsAlert" class="savings-alert">
-            <div class="savings-value">💰 Total Savings: <span id="savingsAmount">$0M</span> Annually</div>
-            <div class="savings-details" id="savingsDetails"></div>
-        </div>
-        
         <div class="metrics-grid">
             <div class="metric-card primary">
                 <div class="metric-value" id="techsRequired">0</div>
                 <div class="metric-label">Technicians Required</div>
-                <div class="metric-detail" id="techDetail"></div>
             </div>
             <div class="metric-card success">
                 <div class="metric-value" id="annualServices">0</div>
                 <div class="metric-label">Annual Services</div>
-                <div class="metric-detail" id="serviceDetail"></div>
             </div>
             <div class="metric-card info">
                 <div class="metric-value" id="totalHours">0</div>
                 <div class="metric-label">Total Labor Hours</div>
-                <div class="metric-detail" id="hoursDetail"></div>
             </div>
             <div class="metric-card warning">
-                <div class="metric-value" id="totalCost">$0M</div>
+                <div class="metric-value" id="totalCost">$0</div>
                 <div class="metric-label">Annual O&M Cost</div>
-                <div class="metric-detail" id="costDetail"></div>
             </div>
         </div>
         
@@ -647,12 +607,6 @@
     
     <script>
         let serviceChart, laborChart, staffingChart;
-        let baselineData = {
-            techs: 124,
-            services: 37357,
-            hours: 241749,
-            cost: 29400000
-        };
         
         // Service interval configurations by product type
         const serviceConfigs = {
@@ -1041,31 +995,10 @@
             
             const totalOMCost = (totalLaborCost + totalPartsCost) * (1 + overheadPercent);
             
-            const techSavings = baselineData.techs - techsRequired;
-            const hoursSavings = baselineData.hours - totalLaborHours;
-            const costSavings = baselineData.cost - totalOMCost;
-            
             document.getElementById('techsRequired').textContent = techsRequired;
             document.getElementById('annualServices').textContent = totalServices.toLocaleString();
             document.getElementById('totalHours').textContent = Math.round(totalLaborHours).toLocaleString();
-            document.getElementById('totalCost').textContent = `$${(totalOMCost / 1000000).toFixed(1)}M`;
-            
-            const partsDiscountPercent = parseFloat(document.getElementById('partsDiscount').value);
-            document.getElementById('techDetail').textContent = techSavings > 0 ? 
-                `${techSavings} fewer than baseline` : (techSavings < 0 ? `${Math.abs(techSavings)} more than baseline` : 'At baseline');
-            document.getElementById('hoursDetail').textContent = hoursSavings > 0 ? 
-                `${Math.round(hoursSavings).toLocaleString()} hrs saved` : (hoursSavings < 0 ? `${Math.round(Math.abs(hoursSavings)).toLocaleString()} hrs increase` : 'At baseline');
-            document.getElementById('costDetail').textContent = 
-                `Labor: $${(totalLaborCost / 1000000).toFixed(1)}M | Parts: $${(totalPartsCost / 1000000).toFixed(1)}M (${partsDiscountPercent}% disc)`;
-            
-            if (costSavings > 1000000) {
-                document.getElementById('savingsAlert').classList.add('show');
-                document.getElementById('savingsAmount').textContent = `$${(costSavings / 1000000).toFixed(1)}M`;
-                document.getElementById('savingsDetails').textContent = 
-                    `${techSavings} fewer technicians | ${Math.round(hoursSavings).toLocaleString()} fewer labor hours | Labor: $${(totalLaborCost / 1000000).toFixed(1)}M | Parts: $${(totalPartsCost / 1000000).toFixed(1)}M`;
-            } else {
-                document.getElementById('savingsAlert').classList.remove('show');
-            }
+            document.getElementById('totalCost').textContent = `${Math.round(totalOMCost).toLocaleString()}`;
             
             serviceChart.data.labels = serviceData.map(d => d.name);
             serviceChart.data.datasets[0].data = serviceData.map(d => d.value);
