@@ -1,50 +1,59 @@
-const Database = require('better-sqlite3');
-const path = require('path');
-const fs = require('fs');
+const { Pool } = require('pg');
 
-const DB_PATH = process.env.DB_PATH || path.join(__dirname, '..', 'data', 'pmtool.db');
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+  max: 10,
+});
 
-// Ensure data directory exists
-fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
+// Helper: run a query and return rows
+async function query(text, params) {
+  const res = await pool.query(text, params);
+  return res.rows;
+}
 
-const db = new Database(DB_PATH);
+// Helper: run a query and return first row
+async function queryOne(text, params) {
+  const res = await pool.query(text, params);
+  return res.rows[0] || null;
+}
 
-// Enable WAL mode for better concurrent read performance
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
+// Helper: run an INSERT/UPDATE/DELETE and return result
+async function execute(text, params) {
+  return pool.query(text, params);
+}
 
-function initialize() {
-  db.exec(`
+async function initialize() {
+  await pool.query(`
     -- Equipment models catalog
     CREATE TABLE IF NOT EXISTS equipment_models (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       model_number TEXT NOT NULL UNIQUE,
       manufacturer TEXT DEFAULT 'PSI',
       engine_family TEXT,
-      engine_type TEXT NOT NULL,       -- natural_gas, diesel, dual_fuel, biogas, propane
+      engine_type TEXT NOT NULL,
       power_rating_kw REAL NOT NULL,
       power_rating_hp REAL,
       voltage TEXT DEFAULT '480V',
       frequency TEXT DEFAULT '60Hz',
-      application_types TEXT NOT NULL,  -- JSON array: ["standby","prime","ltp","continuous"]
+      application_types TEXT NOT NULL,
       default_annual_hours_standby REAL DEFAULT 200,
       default_annual_hours_prime REAL DEFAULT 6500,
       default_annual_hours_ltp REAL DEFAULT 4000,
       default_annual_hours_continuous REAL DEFAULT 8760,
-      fuel_consumption_rate_full REAL,  -- units per hour at full load
-      fuel_consumption_rate_75 REAL,    -- units per hour at 75% load
-      fuel_consumption_rate_50 REAL,    -- units per hour at 50% load
+      fuel_consumption_rate_full REAL,
+      fuel_consumption_rate_75 REAL,
+      fuel_consumption_rate_50 REAL,
       fuel_consumption_unit TEXT DEFAULT 'therms/hr',
       oil_capacity_gallons REAL,
       coolant_capacity_gallons REAL,
       weight_lbs REAL,
       notes TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      created_at TIMESTAMPTZ DEFAULT NOW()
     );
 
-    -- Price lists (uploaded files)
     CREATE TABLE IF NOT EXISTS price_lists (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       name TEXT NOT NULL,
       description TEXT,
       file_name TEXT,
@@ -52,38 +61,35 @@ function initialize() {
       effective_date DATE,
       expiration_date DATE,
       status TEXT DEFAULT 'active',
-      uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      uploaded_at TIMESTAMPTZ DEFAULT NOW()
     );
 
-    -- Individual parts in price lists
     CREATE TABLE IF NOT EXISTS price_list_items (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       price_list_id INTEGER NOT NULL REFERENCES price_lists(id) ON DELETE CASCADE,
       part_number TEXT NOT NULL,
       description TEXT,
-      category TEXT,           -- filter, fluid, gasket, belt, spark_plug, sensor, major_component, etc.
+      category TEXT,
       subcategory TEXT,
       unit_price REAL NOT NULL,
       unit TEXT DEFAULT 'each',
-      applicable_models TEXT,  -- JSON array of model_numbers, or null for all
+      applicable_models TEXT,
       lead_time_days INTEGER,
       notes TEXT,
       UNIQUE(price_list_id, part_number)
     );
 
-    -- Fleet configurations
     CREATE TABLE IF NOT EXISTS fleets (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       name TEXT NOT NULL,
       description TEXT,
       location TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
     );
 
-    -- Units within a fleet
     CREATE TABLE IF NOT EXISTS fleet_units (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       fleet_id INTEGER NOT NULL REFERENCES fleets(id) ON DELETE CASCADE,
       equipment_model_id INTEGER NOT NULL REFERENCES equipment_models(id),
       unit_name TEXT,
@@ -102,20 +108,18 @@ function initialize() {
       notes TEXT
     );
 
-    -- PM schedule templates
     CREATE TABLE IF NOT EXISTS pm_schedules (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       name TEXT NOT NULL,
       description TEXT,
       equipment_model_id INTEGER REFERENCES equipment_models(id),
       application_type TEXT,
       is_default BOOLEAN DEFAULT FALSE,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      created_at TIMESTAMPTZ DEFAULT NOW()
     );
 
-    -- Individual PM tasks within a schedule
     CREATE TABLE IF NOT EXISTS pm_tasks (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       pm_schedule_id INTEGER NOT NULL REFERENCES pm_schedules(id) ON DELETE CASCADE,
       name TEXT NOT NULL,
       description TEXT,
@@ -123,27 +127,25 @@ function initialize() {
       interval_months REAL,
       labor_hours REAL NOT NULL DEFAULT 1,
       skill_level TEXT DEFAULT 'technician',
-      is_one_time BOOLEAN DEFAULT 0,
-      is_automated BOOLEAN DEFAULT 0,
-      is_locked BOOLEAN DEFAULT 0,
-      can_extend_interval BOOLEAN DEFAULT 1,
+      is_one_time BOOLEAN DEFAULT FALSE,
+      is_automated BOOLEAN DEFAULT FALSE,
+      is_locked BOOLEAN DEFAULT FALSE,
+      can_extend_interval BOOLEAN DEFAULT TRUE,
       max_extension_pct REAL DEFAULT 0.6,
       sort_order INTEGER DEFAULT 0
     );
 
-    -- Parts required for each PM task
     CREATE TABLE IF NOT EXISTS pm_task_parts (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       pm_task_id INTEGER NOT NULL REFERENCES pm_tasks(id) ON DELETE CASCADE,
       part_number TEXT,
       description TEXT,
       quantity REAL DEFAULT 1,
-      is_optional BOOLEAN DEFAULT 0
+      is_optional BOOLEAN DEFAULT FALSE
     );
 
-    -- Component lifecycle tracking
     CREATE TABLE IF NOT EXISTS component_lifecycles (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       equipment_model_id INTEGER REFERENCES equipment_models(id),
       component_name TEXT NOT NULL,
       category TEXT,
@@ -158,9 +160,8 @@ function initialize() {
       notes TEXT
     );
 
-    -- Analysis scenarios
     CREATE TABLE IF NOT EXISTS scenarios (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       name TEXT NOT NULL,
       description TEXT,
       fleet_id INTEGER REFERENCES fleets(id),
@@ -179,22 +180,20 @@ function initialize() {
       inflation_rate_pct REAL DEFAULT 3,
       fuel_cost_per_unit REAL DEFAULT 1.0,
       downtime_cost_per_hour REAL DEFAULT 500,
-      include_fuel_costs BOOLEAN DEFAULT 1,
-      include_downtime_costs BOOLEAN DEFAULT 1,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      include_fuel_costs BOOLEAN DEFAULT TRUE,
+      include_downtime_costs BOOLEAN DEFAULT TRUE,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
     );
 
-    -- Saved analysis snapshots
     CREATE TABLE IF NOT EXISTS analysis_snapshots (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       scenario_id INTEGER NOT NULL REFERENCES scenarios(id) ON DELETE CASCADE,
       name TEXT,
       result_data TEXT NOT NULL,
-      calculated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      calculated_at TIMESTAMPTZ DEFAULT NOW()
     );
 
-    -- Indexes for performance
     CREATE INDEX IF NOT EXISTS idx_price_list_items_list ON price_list_items(price_list_id);
     CREATE INDEX IF NOT EXISTS idx_price_list_items_part ON price_list_items(part_number);
     CREATE INDEX IF NOT EXISTS idx_fleet_units_fleet ON fleet_units(fleet_id);
@@ -204,4 +203,4 @@ function initialize() {
   `);
 }
 
-module.exports = { db, initialize };
+module.exports = { pool, query, queryOne, execute, initialize };

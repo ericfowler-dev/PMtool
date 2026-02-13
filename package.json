@@ -15,7 +15,7 @@
     "postinstall": "npm run client:install"
   },
   "dependencies": {
-    "better-sqlite3": "^11.7.0",
+    "pg": "^8.13.0",
     "cors": "^2.8.5",
     "express": "^4.21.0",
     "helmet": "^8.0.0",

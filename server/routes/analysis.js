@@ -1,12 +1,12 @@
 const express = require('express');
 const router = express.Router();
-const { db } = require('../database');
+const { query, queryOne, execute } = require('../database');
 
 // ─────────────────────────────────────────────────────────────
 // Helper: Load all data needed for an analysis from a scenario
 // ─────────────────────────────────────────────────────────────
-function loadScenarioData(scenarioId) {
-  const scenario = db.prepare(`
+async function loadScenarioData(scenarioId) {
+  const scenario = await queryOne(`
     SELECT s.*,
       f.name AS fleet_name,
       ps.name AS pm_schedule_name,
@@ -15,14 +15,14 @@ function loadScenarioData(scenarioId) {
     LEFT JOIN fleets f ON f.id = s.fleet_id
     LEFT JOIN pm_schedules ps ON ps.id = s.pm_schedule_id
     LEFT JOIN price_lists pl ON pl.id = s.price_list_id
-    WHERE s.id = ?
-  `).get(scenarioId);
+    WHERE s.id = $1
+  `, [scenarioId]);
 
   if (!scenario) return null;
 
   // Fleet units with model info
   const fleetUnits = scenario.fleet_id
-    ? db.prepare(`
+    ? await query(`
         SELECT fu.*,
           em.model_number, em.manufacturer, em.engine_type, em.engine_family,
           em.power_rating_kw, em.power_rating_hp,
@@ -32,24 +32,23 @@ function loadScenarioData(scenarioId) {
           em.default_annual_hours_ltp, em.default_annual_hours_continuous
         FROM fleet_units fu
         JOIN equipment_models em ON em.id = fu.equipment_model_id
-        WHERE fu.fleet_id = ?
-      `).all(scenario.fleet_id)
+        WHERE fu.fleet_id = $1
+      `, [scenario.fleet_id])
     : [];
 
   // PM tasks with parts
   const pmTasks = scenario.pm_schedule_id
-    ? db.prepare('SELECT * FROM pm_tasks WHERE pm_schedule_id = ? ORDER BY sort_order').all(scenario.pm_schedule_id)
+    ? await query('SELECT * FROM pm_tasks WHERE pm_schedule_id = $1 ORDER BY sort_order', [scenario.pm_schedule_id])
     : [];
 
-  const getTaskParts = db.prepare('SELECT * FROM pm_task_parts WHERE pm_task_id = ?');
   for (const task of pmTasks) {
-    task.parts = getTaskParts.all(task.id);
+    task.parts = await query('SELECT * FROM pm_task_parts WHERE pm_task_id = $1', [task.id]);
   }
 
   // Price list items (indexed by part_number for quick lookup)
   const priceMap = {};
   if (scenario.price_list_id) {
-    const items = db.prepare('SELECT * FROM price_list_items WHERE price_list_id = ?').all(scenario.price_list_id);
+    const items = await query('SELECT * FROM price_list_items WHERE price_list_id = $1', [scenario.price_list_id]);
     for (const item of items) {
       priceMap[item.part_number] = item;
     }
@@ -58,10 +57,10 @@ function loadScenarioData(scenarioId) {
   // Component lifecycles for all models in the fleet
   const modelIds = [...new Set(fleetUnits.map(u => u.equipment_model_id))];
   const componentLifecycles = modelIds.length > 0
-    ? db.prepare(`
-        SELECT * FROM component_lifecycles
-        WHERE equipment_model_id IN (${modelIds.map(() => '?').join(',')})
-      `).all(...modelIds)
+    ? await query(
+        'SELECT * FROM component_lifecycles WHERE equipment_model_id = ANY($1::int[])',
+        [modelIds]
+      )
     : [];
 
   return { scenario, fleetUnits, pmTasks, priceMap, componentLifecycles };
@@ -224,7 +223,11 @@ function runAnalysis(data) {
         fuelRate = unit.fuel_consumption_rate_50 || unit.fuel_consumption_rate_75 || unit.fuel_consumption_rate_full || 0;
       }
 
-      const unitFuelCost = fuelRate * hours * scenario.fuel_cost_per_unit * unit.quantity;
+      // Normalize CFH to therms (1 therm = 100 cubic feet)
+      const fuelUnit = unit.fuel_consumption_unit || 'CFH';
+      const normalizedFuelRate = fuelUnit === 'CFH' ? fuelRate / 100 : fuelRate;
+
+      const unitFuelCost = normalizedFuelRate * hours * dutyCycle * scenario.fuel_cost_per_unit * unit.quantity;
       annualFuelCost += unitFuelCost;
 
       fuelDetails.push({
@@ -234,7 +237,7 @@ function runAnalysis(data) {
         annual_hours: hours,
         duty_cycle: dutyCycle,
         fuel_rate: fuelRate,
-        fuel_unit: unit.fuel_consumption_unit || 'therms/hr',
+        fuel_unit: fuelUnit,
         annual_fuel_cost: round2(unitFuelCost)
       });
     }
@@ -498,7 +501,7 @@ function round2(val) {
 // ═════════════════════════════════════════════════════════════
 // POST /calculate - Run full analysis for a scenario
 // ═════════════════════════════════════════════════════════════
-router.post('/calculate', (req, res) => {
+router.post('/calculate', async (req, res) => {
   try {
     const { scenario_id } = req.body;
 
@@ -506,7 +509,7 @@ router.post('/calculate', (req, res) => {
       return res.status(400).json({ error: 'Missing required field: scenario_id' });
     }
 
-    const data = loadScenarioData(scenario_id);
+    const data = await loadScenarioData(scenario_id);
     if (!data) {
       return res.status(404).json({ error: 'Scenario not found' });
     }
@@ -535,7 +538,7 @@ router.post('/calculate', (req, res) => {
 // ═════════════════════════════════════════════════════════════
 // POST /compare - Compare multiple scenarios side by side
 // ═════════════════════════════════════════════════════════════
-router.post('/compare', (req, res) => {
+router.post('/compare', async (req, res) => {
   try {
     const { scenario_ids } = req.body;
 
@@ -547,7 +550,7 @@ router.post('/compare', (req, res) => {
     const errors = [];
 
     for (const scenarioId of scenario_ids) {
-      const data = loadScenarioData(scenarioId);
+      const data = await loadScenarioData(scenarioId);
       if (!data) {
         errors.push({ scenario_id: scenarioId, error: 'Scenario not found' });
         continue;
@@ -613,7 +616,7 @@ router.post('/compare', (req, res) => {
 // ═════════════════════════════════════════════════════════════
 // POST /quick-calculate - Quick calculation without saving
 // ═════════════════════════════════════════════════════════════
-router.post('/quick-calculate', (req, res) => {
+router.post('/quick-calculate', async (req, res) => {
   try {
     const {
       // Fleet definition (inline)
@@ -667,15 +670,15 @@ router.post('/quick-calculate', (req, res) => {
       inflation_rate_pct,
       fuel_cost_per_unit,
       downtime_cost_per_hour,
-      include_fuel_costs: include_fuel_costs ? 1 : 0,
-      include_downtime_costs: include_downtime_costs ? 1 : 0,
+      include_fuel_costs: include_fuel_costs ? true : false,
+      include_downtime_costs: include_downtime_costs ? true : false,
       fleet_name: 'Quick Calculation Fleet'
     };
 
     // Resolve fleet units
     let fleetUnits = [];
     if (fleet_id) {
-      fleetUnits = db.prepare(`
+      fleetUnits = await query(`
         SELECT fu.*,
           em.model_number, em.manufacturer, em.engine_type, em.engine_family,
           em.power_rating_kw, em.power_rating_hp,
@@ -685,13 +688,13 @@ router.post('/quick-calculate', (req, res) => {
           em.default_annual_hours_ltp, em.default_annual_hours_continuous
         FROM fleet_units fu
         JOIN equipment_models em ON em.id = fu.equipment_model_id
-        WHERE fu.fleet_id = ?
-      `).all(fleet_id);
+        WHERE fu.fleet_id = $1
+      `, [fleet_id]);
     } else if (inlineUnits && Array.isArray(inlineUnits)) {
       // Inline units: each must have equipment_model_id
       for (const iu of inlineUnits) {
         if (!iu.equipment_model_id) continue;
-        const model = db.prepare('SELECT * FROM equipment_models WHERE id = ?').get(iu.equipment_model_id);
+        const model = await queryOne('SELECT * FROM equipment_models WHERE id = $1', [iu.equipment_model_id]);
         if (!model) continue;
 
         fleetUnits.push({
@@ -734,10 +737,9 @@ router.post('/quick-calculate', (req, res) => {
     // Resolve PM tasks
     let pmTasks = [];
     if (pm_schedule_id) {
-      pmTasks = db.prepare('SELECT * FROM pm_tasks WHERE pm_schedule_id = ? ORDER BY sort_order').all(pm_schedule_id);
-      const getTaskParts = db.prepare('SELECT * FROM pm_task_parts WHERE pm_task_id = ?');
+      pmTasks = await query('SELECT * FROM pm_tasks WHERE pm_schedule_id = $1 ORDER BY sort_order', [pm_schedule_id]);
       for (const task of pmTasks) {
-        task.parts = getTaskParts.all(task.id);
+        task.parts = await query('SELECT * FROM pm_task_parts WHERE pm_task_id = $1', [task.id]);
       }
     } else if (inlineTasks && Array.isArray(inlineTasks)) {
       pmTasks = inlineTasks.map((t, idx) => ({
@@ -749,17 +751,17 @@ router.post('/quick-calculate', (req, res) => {
         interval_months: t.interval_months || null,
         labor_hours: t.labor_hours ?? 1,
         skill_level: t.skill_level || 'technician',
-        is_one_time: t.is_one_time ? 1 : 0,
-        is_automated: t.is_automated ? 1 : 0,
-        is_locked: t.is_locked ? 1 : 0,
-        can_extend_interval: t.can_extend_interval !== false ? 1 : 0,
+        is_one_time: t.is_one_time ? true : false,
+        is_automated: t.is_automated ? true : false,
+        is_locked: t.is_locked ? true : false,
+        can_extend_interval: t.can_extend_interval !== false ? true : false,
         max_extension_pct: t.max_extension_pct ?? 0.6,
         sort_order: t.sort_order ?? idx,
         parts: (t.parts || []).map(p => ({
           part_number: p.part_number || null,
           description: p.description || null,
           quantity: p.quantity ?? 1,
-          is_optional: p.is_optional ? 1 : 0
+          is_optional: p.is_optional ? true : false
         }))
       }));
     }
@@ -773,7 +775,7 @@ router.post('/quick-calculate', (req, res) => {
     // Price map
     const priceMap = {};
     if (price_list_id) {
-      const items = db.prepare('SELECT * FROM price_list_items WHERE price_list_id = ?').all(price_list_id);
+      const items = await query('SELECT * FROM price_list_items WHERE price_list_id = $1', [price_list_id]);
       for (const item of items) {
         priceMap[item.part_number] = item;
       }
@@ -782,10 +784,10 @@ router.post('/quick-calculate', (req, res) => {
     // Component lifecycles
     const modelIds = [...new Set(fleetUnits.map(u => u.equipment_model_id))];
     const componentLifecycles = modelIds.length > 0
-      ? db.prepare(`
-          SELECT * FROM component_lifecycles
-          WHERE equipment_model_id IN (${modelIds.map(() => '?').join(',')})
-        `).all(...modelIds)
+      ? await query(
+          'SELECT * FROM component_lifecycles WHERE equipment_model_id = ANY($1::int[])',
+          [modelIds]
+        )
       : [];
 
     const data = { scenario, fleetUnits, pmTasks, priceMap, componentLifecycles };

@@ -1,39 +1,40 @@
 const express = require('express');
 const router = express.Router();
-const { db } = require('../database');
+const { query, queryOne, execute } = require('../database');
 
 // GET / - List all equipment models with optional filters
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
     const { engine_type, application_type, min_kw, max_kw } = req.query;
 
     let sql = 'SELECT * FROM equipment_models WHERE 1=1';
     const params = [];
+    let paramIndex = 1;
 
     if (engine_type) {
-      sql += ' AND engine_type = ?';
+      sql += ` AND engine_type = $${paramIndex++}`;
       params.push(engine_type);
     }
 
     if (application_type) {
-      // application_types is a JSON array, search within it
-      sql += ' AND application_types LIKE ?';
+      // application_types is a JSON array stored as text, search within it
+      sql += ` AND application_types LIKE $${paramIndex++}`;
       params.push(`%"${application_type}"%`);
     }
 
     if (min_kw) {
-      sql += ' AND power_rating_kw >= ?';
+      sql += ` AND power_rating_kw >= $${paramIndex++}`;
       params.push(Number(min_kw));
     }
 
     if (max_kw) {
-      sql += ' AND power_rating_kw <= ?';
+      sql += ` AND power_rating_kw <= $${paramIndex++}`;
       params.push(Number(max_kw));
     }
 
     sql += ' ORDER BY manufacturer, model_number';
 
-    const models = db.prepare(sql).all(...params);
+    const models = await query(sql, params);
 
     // Parse JSON fields
     const result = models.map(m => ({
@@ -49,9 +50,9 @@ router.get('/', (req, res) => {
 });
 
 // GET /:id - Get single model with component lifecycles
-router.get('/:id', (req, res) => {
+router.get('/:id', async (req, res) => {
   try {
-    const model = db.prepare('SELECT * FROM equipment_models WHERE id = ?').get(req.params.id);
+    const model = await queryOne('SELECT * FROM equipment_models WHERE id = $1', [req.params.id]);
 
     if (!model) {
       return res.status(404).json({ error: 'Equipment model not found' });
@@ -60,9 +61,10 @@ router.get('/:id', (req, res) => {
     model.application_types = JSON.parse(model.application_types || '[]');
 
     // Get component lifecycles for this model
-    const lifecycles = db.prepare(
-      'SELECT * FROM component_lifecycles WHERE equipment_model_id = ? ORDER BY category, component_name'
-    ).all(req.params.id);
+    const lifecycles = await query(
+      'SELECT * FROM component_lifecycles WHERE equipment_model_id = $1 ORDER BY category, component_name',
+      [req.params.id]
+    );
 
     res.json({ ...model, component_lifecycles: lifecycles });
   } catch (err) {
@@ -72,7 +74,7 @@ router.get('/:id', (req, res) => {
 });
 
 // POST / - Create new equipment model
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   try {
     const {
       model_number, manufacturer, engine_family, engine_type,
@@ -95,7 +97,7 @@ router.post('/', (req, res) => {
       ? JSON.stringify(application_types)
       : application_types;
 
-    const result = db.prepare(`
+    const inserted = await queryOne(`
       INSERT INTO equipment_models (
         model_number, manufacturer, engine_family, engine_type,
         power_rating_kw, power_rating_hp, voltage, frequency,
@@ -106,9 +108,9 @@ router.post('/', (req, res) => {
         fuel_consumption_rate_50, fuel_consumption_unit,
         oil_capacity_gallons, coolant_capacity_gallons, weight_lbs, notes
       ) VALUES (
-        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-      )
-    `).run(
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21
+      ) RETURNING id
+    `, [
       model_number, manufacturer || 'PSI', engine_family, engine_type,
       power_rating_kw, power_rating_hp, voltage || '480V', frequency || '60Hz',
       appTypesJson,
@@ -117,14 +119,14 @@ router.post('/', (req, res) => {
       fuel_consumption_rate_full, fuel_consumption_rate_75,
       fuel_consumption_rate_50, fuel_consumption_unit || 'therms/hr',
       oil_capacity_gallons, coolant_capacity_gallons, weight_lbs, notes
-    );
+    ]);
 
-    const created = db.prepare('SELECT * FROM equipment_models WHERE id = ?').get(result.lastInsertRowid);
+    const created = await queryOne('SELECT * FROM equipment_models WHERE id = $1', [inserted.id]);
     created.application_types = JSON.parse(created.application_types || '[]');
 
     res.status(201).json(created);
   } catch (err) {
-    if (err.message.includes('UNIQUE constraint')) {
+    if (err.message.includes('unique') || err.message.includes('duplicate key')) {
       return res.status(409).json({ error: 'A model with this model_number already exists' });
     }
     console.error('Error creating equipment model:', err);
@@ -133,9 +135,9 @@ router.post('/', (req, res) => {
 });
 
 // PUT /:id - Update equipment model
-router.put('/:id', (req, res) => {
+router.put('/:id', async (req, res) => {
   try {
-    const existing = db.prepare('SELECT * FROM equipment_models WHERE id = ?').get(req.params.id);
+    const existing = await queryOne('SELECT * FROM equipment_models WHERE id = $1', [req.params.id]);
     if (!existing) {
       return res.status(404).json({ error: 'Equipment model not found' });
     }
@@ -153,6 +155,7 @@ router.put('/:id', (req, res) => {
 
     const updates = [];
     const values = [];
+    let paramIndex = 1;
 
     for (const field of fields) {
       if (req.body[field] !== undefined) {
@@ -160,7 +163,7 @@ router.put('/:id', (req, res) => {
         if (field === 'application_types' && Array.isArray(value)) {
           value = JSON.stringify(value);
         }
-        updates.push(`${field} = ?`);
+        updates.push(`${field} = $${paramIndex++}`);
         values.push(value);
       }
     }
@@ -170,14 +173,14 @@ router.put('/:id', (req, res) => {
     }
 
     values.push(req.params.id);
-    db.prepare(`UPDATE equipment_models SET ${updates.join(', ')} WHERE id = ?`).run(...values);
+    await execute(`UPDATE equipment_models SET ${updates.join(', ')} WHERE id = $${paramIndex}`, values);
 
-    const updated = db.prepare('SELECT * FROM equipment_models WHERE id = ?').get(req.params.id);
+    const updated = await queryOne('SELECT * FROM equipment_models WHERE id = $1', [req.params.id]);
     updated.application_types = JSON.parse(updated.application_types || '[]');
 
     res.json(updated);
   } catch (err) {
-    if (err.message.includes('UNIQUE constraint')) {
+    if (err.message.includes('unique') || err.message.includes('duplicate key')) {
       return res.status(409).json({ error: 'A model with this model_number already exists' });
     }
     console.error('Error updating equipment model:', err);
@@ -186,14 +189,14 @@ router.put('/:id', (req, res) => {
 });
 
 // DELETE /:id - Delete equipment model
-router.delete('/:id', (req, res) => {
+router.delete('/:id', async (req, res) => {
   try {
-    const existing = db.prepare('SELECT * FROM equipment_models WHERE id = ?').get(req.params.id);
+    const existing = await queryOne('SELECT * FROM equipment_models WHERE id = $1', [req.params.id]);
     if (!existing) {
       return res.status(404).json({ error: 'Equipment model not found' });
     }
 
-    db.prepare('DELETE FROM equipment_models WHERE id = ?').run(req.params.id);
+    await execute('DELETE FROM equipment_models WHERE id = $1', [req.params.id]);
 
     res.json({ message: 'Equipment model deleted', id: Number(req.params.id) });
   } catch (err) {

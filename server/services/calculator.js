@@ -1,4 +1,4 @@
-const { db } = require('../database');
+const { query, queryOne } = require('../database');
 
 /**
  * Core TCO & maintenance cost calculation engine.
@@ -337,37 +337,37 @@ function calculateFullAnalysis(config) {
 /**
  * Resolve a scenario from the database into a full config for calculation.
  */
-function resolveScenario(scenarioId) {
-  const scenario = db.prepare('SELECT * FROM scenarios WHERE id = ?').get(scenarioId);
+async function resolveScenario(scenarioId) {
+  const scenario = await queryOne('SELECT * FROM scenarios WHERE id = $1', [scenarioId]);
   if (!scenario) throw new Error('Scenario not found');
 
   // Get fleet units with equipment info
   let fleet_units = [];
   if (scenario.fleet_id) {
-    fleet_units = db.prepare(`
+    fleet_units = await query(`
       SELECT fu.*, em.power_rating_kw, em.fuel_consumption_rate_75 as fuel_consumption_rate,
              em.fuel_consumption_unit, em.model_number
       FROM fleet_units fu
       JOIN equipment_models em ON fu.equipment_model_id = em.id
-      WHERE fu.fleet_id = ?
-    `).all(scenario.fleet_id);
+      WHERE fu.fleet_id = $1
+    `, [scenario.fleet_id]);
   }
 
   // Get PM tasks with parts (resolved from price list)
   let pm_tasks = [];
   if (scenario.pm_schedule_id) {
-    const tasks = db.prepare(`
-      SELECT * FROM pm_tasks WHERE pm_schedule_id = ? ORDER BY sort_order, id
-    `).all(scenario.pm_schedule_id);
+    const tasks = await query(
+      'SELECT * FROM pm_tasks WHERE pm_schedule_id = $1 ORDER BY sort_order, id',
+      [scenario.pm_schedule_id]);
 
     for (const task of tasks) {
-      const taskParts = db.prepare(`
+      const taskParts = await query(`
         SELECT tp.*, pli.unit_price, pli.description as part_description
         FROM pm_task_parts tp
         LEFT JOIN price_list_items pli ON tp.part_number = pli.part_number
-          AND pli.price_list_id = ?
-        WHERE tp.pm_task_id = ?
-      `).all(scenario.price_list_id || 0, task.id);
+          AND pli.price_list_id = $1
+        WHERE tp.pm_task_id = $2
+      `, [scenario.price_list_id || 0, task.id]);
 
       pm_tasks.push({
         ...task,
@@ -382,9 +382,9 @@ function resolveScenario(scenarioId) {
   if (scenario.fleet_id) {
     const modelIds = [...new Set(fleet_units.map(u => u.equipment_model_id))];
     if (modelIds.length > 0) {
-      component_lifecycles = db.prepare(`
-        SELECT * FROM component_lifecycles WHERE equipment_model_id IN (${modelIds.map(() => '?').join(',')})
-      `).all(...modelIds);
+      component_lifecycles = await query(
+        'SELECT * FROM component_lifecycles WHERE equipment_model_id = ANY($1::int[])',
+        [modelIds]);
     }
   }
 

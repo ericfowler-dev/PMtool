@@ -1,16 +1,20 @@
+databases:
+  - name: pmtool-db
+    plan: free
+    databaseName: pmtool
+    user: pmtool
+
 services:
   - type: web
     name: pmtool
     runtime: node
-    plan: starter
+    plan: free
     buildCommand: npm install && npm run build
     startCommand: npm run seed && npm start
     envVars:
       - key: NODE_ENV
         value: production
-      - key: DB_PATH
-        value: /opt/render/project/data/pmtool.db
-    disk:
-      name: pmtool-data
-      mountPath: /opt/render/project/data
-      sizeGB: 1
+      - key: DATABASE_URL
+        fromDatabase:
+          name: pmtool-db
+          property: connectionString

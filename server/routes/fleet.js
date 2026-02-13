@@ -1,11 +1,11 @@
 const express = require('express');
 const router = express.Router();
-const { db } = require('../database');
+const { query, queryOne, execute } = require('../database');
 
 // GET / - List all fleets with unit counts
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
-    const fleets = db.prepare(`
+    const fleets = await query(`
       SELECT f.*,
         COALESCE(SUM(fu.quantity), 0) AS total_units,
         COUNT(fu.id) AS unit_line_count
@@ -13,7 +13,7 @@ router.get('/', (req, res) => {
       LEFT JOIN fleet_units fu ON fu.fleet_id = f.id
       GROUP BY f.id
       ORDER BY f.updated_at DESC
-    `).all();
+    `);
 
     res.json(fleets);
   } catch (err) {
@@ -23,14 +23,14 @@ router.get('/', (req, res) => {
 });
 
 // GET /:id - Get fleet with all units (joined with equipment_models)
-router.get('/:id', (req, res) => {
+router.get('/:id', async (req, res) => {
   try {
-    const fleet = db.prepare('SELECT * FROM fleets WHERE id = ?').get(req.params.id);
+    const fleet = await queryOne('SELECT * FROM fleets WHERE id = $1', [req.params.id]);
     if (!fleet) {
       return res.status(404).json({ error: 'Fleet not found' });
     }
 
-    const units = db.prepare(`
+    const units = await query(`
       SELECT fu.*,
         em.model_number,
         em.manufacturer,
@@ -49,9 +49,9 @@ router.get('/:id', (req, res) => {
         em.default_annual_hours_continuous
       FROM fleet_units fu
       JOIN equipment_models em ON em.id = fu.equipment_model_id
-      WHERE fu.fleet_id = ?
+      WHERE fu.fleet_id = $1
       ORDER BY fu.unit_name, em.model_number
-    `).all(req.params.id);
+    `, [req.params.id]);
 
     // Parse JSON fields
     const parsedUnits = units.map(u => ({
@@ -79,7 +79,7 @@ router.get('/:id', (req, res) => {
 });
 
 // POST / - Create fleet
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   try {
     const { name, description, location } = req.body;
 
@@ -87,11 +87,11 @@ router.post('/', (req, res) => {
       return res.status(400).json({ error: 'Missing required field: name' });
     }
 
-    const result = db.prepare(`
-      INSERT INTO fleets (name, description, location) VALUES (?, ?, ?)
-    `).run(name, description || null, location || null);
+    const inserted = await queryOne(`
+      INSERT INTO fleets (name, description, location) VALUES ($1, $2, $3) RETURNING id
+    `, [name, description || null, location || null]);
 
-    const created = db.prepare('SELECT * FROM fleets WHERE id = ?').get(result.lastInsertRowid);
+    const created = await queryOne('SELECT * FROM fleets WHERE id = $1', [inserted.id]);
     res.status(201).json(created);
   } catch (err) {
     console.error('Error creating fleet:', err);
@@ -100,9 +100,9 @@ router.post('/', (req, res) => {
 });
 
 // PUT /:id - Update fleet
-router.put('/:id', (req, res) => {
+router.put('/:id', async (req, res) => {
   try {
-    const existing = db.prepare('SELECT * FROM fleets WHERE id = ?').get(req.params.id);
+    const existing = await queryOne('SELECT * FROM fleets WHERE id = $1', [req.params.id]);
     if (!existing) {
       return res.status(404).json({ error: 'Fleet not found' });
     }
@@ -110,10 +110,11 @@ router.put('/:id', (req, res) => {
     const fields = ['name', 'description', 'location'];
     const updates = [];
     const values = [];
+    let paramIndex = 1;
 
     for (const field of fields) {
       if (req.body[field] !== undefined) {
-        updates.push(`${field} = ?`);
+        updates.push(`${field} = $${paramIndex++}`);
         values.push(req.body[field]);
       }
     }
@@ -122,12 +123,12 @@ router.put('/:id', (req, res) => {
       return res.status(400).json({ error: 'No fields to update' });
     }
 
-    updates.push('updated_at = CURRENT_TIMESTAMP');
+    updates.push('updated_at = NOW()');
     values.push(req.params.id);
 
-    db.prepare(`UPDATE fleets SET ${updates.join(', ')} WHERE id = ?`).run(...values);
+    await execute(`UPDATE fleets SET ${updates.join(', ')} WHERE id = $${paramIndex}`, values);
 
-    const updated = db.prepare('SELECT * FROM fleets WHERE id = ?').get(req.params.id);
+    const updated = await queryOne('SELECT * FROM fleets WHERE id = $1', [req.params.id]);
     res.json(updated);
   } catch (err) {
     console.error('Error updating fleet:', err);
@@ -136,14 +137,14 @@ router.put('/:id', (req, res) => {
 });
 
 // DELETE /:id - Delete fleet (cascade deletes units)
-router.delete('/:id', (req, res) => {
+router.delete('/:id', async (req, res) => {
   try {
-    const existing = db.prepare('SELECT * FROM fleets WHERE id = ?').get(req.params.id);
+    const existing = await queryOne('SELECT * FROM fleets WHERE id = $1', [req.params.id]);
     if (!existing) {
       return res.status(404).json({ error: 'Fleet not found' });
     }
 
-    db.prepare('DELETE FROM fleets WHERE id = ?').run(req.params.id);
+    await execute('DELETE FROM fleets WHERE id = $1', [req.params.id]);
 
     res.json({ message: 'Fleet deleted', id: Number(req.params.id) });
   } catch (err) {
@@ -153,9 +154,9 @@ router.delete('/:id', (req, res) => {
 });
 
 // POST /:id/units - Add unit to fleet
-router.post('/:id/units', (req, res) => {
+router.post('/:id/units', async (req, res) => {
   try {
-    const fleet = db.prepare('SELECT * FROM fleets WHERE id = ?').get(req.params.id);
+    const fleet = await queryOne('SELECT * FROM fleets WHERE id = $1', [req.params.id]);
     if (!fleet) {
       return res.status(404).json({ error: 'Fleet not found' });
     }
@@ -172,7 +173,7 @@ router.post('/:id/units', (req, res) => {
     }
 
     // Verify equipment model exists
-    const model = db.prepare('SELECT * FROM equipment_models WHERE id = ?').get(equipment_model_id);
+    const model = await queryOne('SELECT * FROM equipment_models WHERE id = $1', [equipment_model_id]);
     if (!model) {
       return res.status(400).json({ error: 'Equipment model not found' });
     }
@@ -185,14 +186,14 @@ router.post('/:id/units', (req, res) => {
       resolvedAnnualHours = model[hoursKey] || model.default_annual_hours_prime;
     }
 
-    const result = db.prepare(`
+    const inserted = await queryOne(`
       INSERT INTO fleet_units (
         fleet_id, equipment_model_id, unit_name, quantity, application_type,
         annual_hours, duty_cycle, fuel_type, fuel_quality,
         environment, ambient_temp_min_f, ambient_temp_max_f, altitude_ft,
         installation_date, commissioning_rate_per_month, notes
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING id
+    `, [
       req.params.id,
       equipment_model_id,
       unit_name || null,
@@ -209,10 +210,10 @@ router.post('/:id/units', (req, res) => {
       installation_date || null,
       commissioning_rate_per_month ?? 1,
       notes || null
-    );
+    ]);
 
     // Return the unit with model info joined
-    const created = db.prepare(`
+    const created = await queryOne(`
       SELECT fu.*,
         em.model_number,
         em.manufacturer,
@@ -221,11 +222,11 @@ router.post('/:id/units', (req, res) => {
         em.power_rating_hp
       FROM fleet_units fu
       JOIN equipment_models em ON em.id = fu.equipment_model_id
-      WHERE fu.id = ?
-    `).get(result.lastInsertRowid);
+      WHERE fu.id = $1
+    `, [inserted.id]);
 
     // Update fleet timestamp
-    db.prepare('UPDATE fleets SET updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(req.params.id);
+    await execute('UPDATE fleets SET updated_at = NOW() WHERE id = $1', [req.params.id]);
 
     res.status(201).json(created);
   } catch (err) {
@@ -235,11 +236,12 @@ router.post('/:id/units', (req, res) => {
 });
 
 // PUT /:id/units/:unitId - Update unit
-router.put('/:id/units/:unitId', (req, res) => {
+router.put('/:id/units/:unitId', async (req, res) => {
   try {
-    const unit = db.prepare(
-      'SELECT * FROM fleet_units WHERE id = ? AND fleet_id = ?'
-    ).get(req.params.unitId, req.params.id);
+    const unit = await queryOne(
+      'SELECT * FROM fleet_units WHERE id = $1 AND fleet_id = $2',
+      [req.params.unitId, req.params.id]
+    );
 
     if (!unit) {
       return res.status(404).json({ error: 'Fleet unit not found' });
@@ -254,10 +256,11 @@ router.put('/:id/units/:unitId', (req, res) => {
 
     const updates = [];
     const values = [];
+    let paramIndex = 1;
 
     for (const field of fields) {
       if (req.body[field] !== undefined) {
-        updates.push(`${field} = ?`);
+        updates.push(`${field} = $${paramIndex++}`);
         values.push(req.body[field]);
       }
     }
@@ -268,19 +271,19 @@ router.put('/:id/units/:unitId', (req, res) => {
 
     // If changing equipment_model_id, verify it exists
     if (req.body.equipment_model_id) {
-      const model = db.prepare('SELECT id FROM equipment_models WHERE id = ?').get(req.body.equipment_model_id);
+      const model = await queryOne('SELECT id FROM equipment_models WHERE id = $1', [req.body.equipment_model_id]);
       if (!model) {
         return res.status(400).json({ error: 'Equipment model not found' });
       }
     }
 
     values.push(req.params.unitId);
-    db.prepare(`UPDATE fleet_units SET ${updates.join(', ')} WHERE id = ?`).run(...values);
+    await execute(`UPDATE fleet_units SET ${updates.join(', ')} WHERE id = $${paramIndex}`, values);
 
     // Update fleet timestamp
-    db.prepare('UPDATE fleets SET updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(req.params.id);
+    await execute('UPDATE fleets SET updated_at = NOW() WHERE id = $1', [req.params.id]);
 
-    const updated = db.prepare(`
+    const updated = await queryOne(`
       SELECT fu.*,
         em.model_number,
         em.manufacturer,
@@ -289,8 +292,8 @@ router.put('/:id/units/:unitId', (req, res) => {
         em.power_rating_hp
       FROM fleet_units fu
       JOIN equipment_models em ON em.id = fu.equipment_model_id
-      WHERE fu.id = ?
-    `).get(req.params.unitId);
+      WHERE fu.id = $1
+    `, [req.params.unitId]);
 
     res.json(updated);
   } catch (err) {
@@ -300,20 +303,21 @@ router.put('/:id/units/:unitId', (req, res) => {
 });
 
 // DELETE /:id/units/:unitId - Remove unit from fleet
-router.delete('/:id/units/:unitId', (req, res) => {
+router.delete('/:id/units/:unitId', async (req, res) => {
   try {
-    const unit = db.prepare(
-      'SELECT * FROM fleet_units WHERE id = ? AND fleet_id = ?'
-    ).get(req.params.unitId, req.params.id);
+    const unit = await queryOne(
+      'SELECT * FROM fleet_units WHERE id = $1 AND fleet_id = $2',
+      [req.params.unitId, req.params.id]
+    );
 
     if (!unit) {
       return res.status(404).json({ error: 'Fleet unit not found' });
     }
 
-    db.prepare('DELETE FROM fleet_units WHERE id = ?').run(req.params.unitId);
+    await execute('DELETE FROM fleet_units WHERE id = $1', [req.params.unitId]);
 
     // Update fleet timestamp
-    db.prepare('UPDATE fleets SET updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(req.params.id);
+    await execute('UPDATE fleets SET updated_at = NOW() WHERE id = $1', [req.params.id]);
 
     res.json({ message: 'Unit removed from fleet', id: Number(req.params.unitId) });
   } catch (err) {

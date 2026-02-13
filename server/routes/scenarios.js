@@ -1,11 +1,11 @@
 const express = require('express');
 const router = express.Router();
-const { db } = require('../database');
+const { query, queryOne, execute } = require('../database');
 
 // GET / - List all scenarios
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
-    const scenarios = db.prepare(`
+    const scenarios = await query(`
       SELECT s.*,
         f.name AS fleet_name,
         ps.name AS pm_schedule_name,
@@ -16,7 +16,7 @@ router.get('/', (req, res) => {
       LEFT JOIN pm_schedules ps ON ps.id = s.pm_schedule_id
       LEFT JOIN price_lists pl ON pl.id = s.price_list_id
       ORDER BY s.updated_at DESC
-    `).all();
+    `);
 
     res.json(scenarios);
   } catch (err) {
@@ -26,9 +26,9 @@ router.get('/', (req, res) => {
 });
 
 // GET /:id - Get scenario with full config
-router.get('/:id', (req, res) => {
+router.get('/:id', async (req, res) => {
   try {
-    const scenario = db.prepare(`
+    const scenario = await queryOne(`
       SELECT s.*,
         f.name AS fleet_name,
         f.description AS fleet_description,
@@ -39,8 +39,8 @@ router.get('/:id', (req, res) => {
       LEFT JOIN fleets f ON f.id = s.fleet_id
       LEFT JOIN pm_schedules ps ON ps.id = s.pm_schedule_id
       LEFT JOIN price_lists pl ON pl.id = s.price_list_id
-      WHERE s.id = ?
-    `).get(req.params.id);
+      WHERE s.id = $1
+    `, [req.params.id]);
 
     if (!scenario) {
       return res.status(404).json({ error: 'Scenario not found' });
@@ -49,7 +49,7 @@ router.get('/:id', (req, res) => {
     // Get fleet units if fleet is assigned
     let fleet_units = [];
     if (scenario.fleet_id) {
-      fleet_units = db.prepare(`
+      fleet_units = await query(`
         SELECT fu.*,
           em.model_number,
           em.manufacturer,
@@ -62,22 +62,20 @@ router.get('/:id', (req, res) => {
           em.fuel_consumption_unit
         FROM fleet_units fu
         JOIN equipment_models em ON em.id = fu.equipment_model_id
-        WHERE fu.fleet_id = ?
-      `).all(scenario.fleet_id);
+        WHERE fu.fleet_id = $1
+      `, [scenario.fleet_id]);
     }
 
     // Get PM schedule tasks if schedule is assigned
     let pm_tasks = [];
     if (scenario.pm_schedule_id) {
-      pm_tasks = db.prepare(`
-        SELECT * FROM pm_tasks WHERE pm_schedule_id = ? ORDER BY sort_order, name
-      `).all(scenario.pm_schedule_id);
+      pm_tasks = await query(`
+        SELECT * FROM pm_tasks WHERE pm_schedule_id = $1 ORDER BY sort_order, name
+      `, [scenario.pm_schedule_id]);
 
-      const getParts = db.prepare('SELECT * FROM pm_task_parts WHERE pm_task_id = ?');
-      pm_tasks = pm_tasks.map(task => ({
-        ...task,
-        parts: getParts.all(task.id)
-      }));
+      for (const task of pm_tasks) {
+        task.parts = await query('SELECT * FROM pm_task_parts WHERE pm_task_id = $1', [task.id]);
+      }
     }
 
     res.json({
@@ -92,7 +90,7 @@ router.get('/:id', (req, res) => {
 });
 
 // POST / - Create scenario
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   try {
     const {
       name, description, fleet_id, pm_schedule_id, price_list_id,
@@ -110,19 +108,19 @@ router.post('/', (req, res) => {
 
     // Validate references if provided
     if (fleet_id) {
-      const fleet = db.prepare('SELECT id FROM fleets WHERE id = ?').get(fleet_id);
+      const fleet = await queryOne('SELECT id FROM fleets WHERE id = $1', [fleet_id]);
       if (!fleet) return res.status(400).json({ error: 'Fleet not found' });
     }
     if (pm_schedule_id) {
-      const schedule = db.prepare('SELECT id FROM pm_schedules WHERE id = ?').get(pm_schedule_id);
+      const schedule = await queryOne('SELECT id FROM pm_schedules WHERE id = $1', [pm_schedule_id]);
       if (!schedule) return res.status(400).json({ error: 'PM schedule not found' });
     }
     if (price_list_id) {
-      const pl = db.prepare('SELECT id FROM price_lists WHERE id = ?').get(price_list_id);
+      const pl = await queryOne('SELECT id FROM price_lists WHERE id = $1', [price_list_id]);
       if (!pl) return res.status(400).json({ error: 'Price list not found' });
     }
 
-    const result = db.prepare(`
+    const inserted = await queryOne(`
       INSERT INTO scenarios (
         name, description, fleet_id, pm_schedule_id, price_list_id,
         analysis_period_years, labor_rate, labor_rate_specialist, labor_rate_engineer,
@@ -131,8 +129,8 @@ router.post('/', (req, res) => {
         discount_rate_pct, inflation_rate_pct,
         fuel_cost_per_unit, downtime_cost_per_hour,
         include_fuel_costs, include_downtime_costs
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20) RETURNING id
+    `, [
       name,
       description || null,
       fleet_id || null,
@@ -151,11 +149,11 @@ router.post('/', (req, res) => {
       inflation_rate_pct ?? 3,
       fuel_cost_per_unit ?? 1.0,
       downtime_cost_per_hour ?? 500,
-      include_fuel_costs !== false ? 1 : 0,
-      include_downtime_costs !== false ? 1 : 0
-    );
+      include_fuel_costs !== false ? true : false,
+      include_downtime_costs !== false ? true : false
+    ]);
 
-    const created = db.prepare('SELECT * FROM scenarios WHERE id = ?').get(result.lastInsertRowid);
+    const created = await queryOne('SELECT * FROM scenarios WHERE id = $1', [inserted.id]);
     res.status(201).json(created);
   } catch (err) {
     console.error('Error creating scenario:', err);
@@ -164,9 +162,9 @@ router.post('/', (req, res) => {
 });
 
 // PUT /:id - Update scenario
-router.put('/:id', (req, res) => {
+router.put('/:id', async (req, res) => {
   try {
-    const existing = db.prepare('SELECT * FROM scenarios WHERE id = ?').get(req.params.id);
+    const existing = await queryOne('SELECT * FROM scenarios WHERE id = $1', [req.params.id]);
     if (!existing) {
       return res.status(404).json({ error: 'Scenario not found' });
     }
@@ -184,14 +182,15 @@ router.put('/:id', (req, res) => {
     const booleanFields = ['include_fuel_costs', 'include_downtime_costs'];
     const updates = [];
     const values = [];
+    let paramIndex = 1;
 
     for (const field of fields) {
       if (req.body[field] !== undefined) {
         let value = req.body[field];
         if (booleanFields.includes(field)) {
-          value = value ? 1 : 0;
+          value = value ? true : false;
         }
-        updates.push(`${field} = ?`);
+        updates.push(`${field} = $${paramIndex++}`);
         values.push(value);
       }
     }
@@ -202,24 +201,24 @@ router.put('/:id', (req, res) => {
 
     // Validate references if being changed
     if (req.body.fleet_id) {
-      const fleet = db.prepare('SELECT id FROM fleets WHERE id = ?').get(req.body.fleet_id);
+      const fleet = await queryOne('SELECT id FROM fleets WHERE id = $1', [req.body.fleet_id]);
       if (!fleet) return res.status(400).json({ error: 'Fleet not found' });
     }
     if (req.body.pm_schedule_id) {
-      const schedule = db.prepare('SELECT id FROM pm_schedules WHERE id = ?').get(req.body.pm_schedule_id);
+      const schedule = await queryOne('SELECT id FROM pm_schedules WHERE id = $1', [req.body.pm_schedule_id]);
       if (!schedule) return res.status(400).json({ error: 'PM schedule not found' });
     }
     if (req.body.price_list_id) {
-      const pl = db.prepare('SELECT id FROM price_lists WHERE id = ?').get(req.body.price_list_id);
+      const pl = await queryOne('SELECT id FROM price_lists WHERE id = $1', [req.body.price_list_id]);
       if (!pl) return res.status(400).json({ error: 'Price list not found' });
     }
 
-    updates.push('updated_at = CURRENT_TIMESTAMP');
+    updates.push('updated_at = NOW()');
     values.push(req.params.id);
 
-    db.prepare(`UPDATE scenarios SET ${updates.join(', ')} WHERE id = ?`).run(...values);
+    await execute(`UPDATE scenarios SET ${updates.join(', ')} WHERE id = $${paramIndex}`, values);
 
-    const updated = db.prepare('SELECT * FROM scenarios WHERE id = ?').get(req.params.id);
+    const updated = await queryOne('SELECT * FROM scenarios WHERE id = $1', [req.params.id]);
     res.json(updated);
   } catch (err) {
     console.error('Error updating scenario:', err);
@@ -228,14 +227,14 @@ router.put('/:id', (req, res) => {
 });
 
 // DELETE /:id - Delete scenario (cascade deletes snapshots)
-router.delete('/:id', (req, res) => {
+router.delete('/:id', async (req, res) => {
   try {
-    const existing = db.prepare('SELECT * FROM scenarios WHERE id = ?').get(req.params.id);
+    const existing = await queryOne('SELECT * FROM scenarios WHERE id = $1', [req.params.id]);
     if (!existing) {
       return res.status(404).json({ error: 'Scenario not found' });
     }
 
-    db.prepare('DELETE FROM scenarios WHERE id = ?').run(req.params.id);
+    await execute('DELETE FROM scenarios WHERE id = $1', [req.params.id]);
 
     res.json({ message: 'Scenario deleted', id: Number(req.params.id) });
   } catch (err) {
@@ -245,9 +244,9 @@ router.delete('/:id', (req, res) => {
 });
 
 // POST /:id/snapshot - Save analysis snapshot
-router.post('/:id/snapshot', (req, res) => {
+router.post('/:id/snapshot', async (req, res) => {
   try {
-    const scenario = db.prepare('SELECT * FROM scenarios WHERE id = ?').get(req.params.id);
+    const scenario = await queryOne('SELECT * FROM scenarios WHERE id = $1', [req.params.id]);
     if (!scenario) {
       return res.status(404).json({ error: 'Scenario not found' });
     }
@@ -262,16 +261,16 @@ router.post('/:id/snapshot', (req, res) => {
       ? result_data
       : JSON.stringify(result_data);
 
-    const result = db.prepare(`
+    const inserted = await queryOne(`
       INSERT INTO analysis_snapshots (scenario_id, name, result_data)
-      VALUES (?, ?, ?)
-    `).run(
+      VALUES ($1, $2, $3) RETURNING id
+    `, [
       req.params.id,
       name || `Snapshot ${new Date().toISOString()}`,
       resultJson
-    );
+    ]);
 
-    const created = db.prepare('SELECT * FROM analysis_snapshots WHERE id = ?').get(result.lastInsertRowid);
+    const created = await queryOne('SELECT * FROM analysis_snapshots WHERE id = $1', [inserted.id]);
     created.result_data = JSON.parse(created.result_data);
 
     res.status(201).json(created);
@@ -282,19 +281,19 @@ router.post('/:id/snapshot', (req, res) => {
 });
 
 // GET /:id/snapshots - List snapshots for a scenario
-router.get('/:id/snapshots', (req, res) => {
+router.get('/:id/snapshots', async (req, res) => {
   try {
-    const scenario = db.prepare('SELECT * FROM scenarios WHERE id = ?').get(req.params.id);
+    const scenario = await queryOne('SELECT * FROM scenarios WHERE id = $1', [req.params.id]);
     if (!scenario) {
       return res.status(404).json({ error: 'Scenario not found' });
     }
 
-    const snapshots = db.prepare(`
+    const snapshots = await query(`
       SELECT id, scenario_id, name, calculated_at
       FROM analysis_snapshots
-      WHERE scenario_id = ?
+      WHERE scenario_id = $1
       ORDER BY calculated_at DESC
-    `).all(req.params.id);
+    `, [req.params.id]);
 
     res.json(snapshots);
   } catch (err) {

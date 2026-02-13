@@ -5,7 +5,7 @@ const fs = require('fs');
 const multer = require('multer');
 const Papa = require('papaparse');
 const XLSX = require('xlsx');
-const { db } = require('../database');
+const { query, queryOne, execute, pool } = require('../database');
 
 // Configure multer for file uploads
 const uploadsDir = path.join(__dirname, '..', '..', 'uploads');
@@ -65,14 +65,14 @@ function parseFileData(filePath, originalName) {
 }
 
 // GET / - List all price lists
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
-    const priceLists = db.prepare(`
+    const priceLists = await query(`
       SELECT pl.*,
         (SELECT COUNT(*) FROM price_list_items WHERE price_list_id = pl.id) AS item_count
       FROM price_lists pl
       ORDER BY pl.uploaded_at DESC
-    `).all();
+    `);
 
     res.json(priceLists);
   } catch (err) {
@@ -82,16 +82,17 @@ router.get('/', (req, res) => {
 });
 
 // GET /:id - Get price list with its items
-router.get('/:id', (req, res) => {
+router.get('/:id', async (req, res) => {
   try {
-    const priceList = db.prepare('SELECT * FROM price_lists WHERE id = ?').get(req.params.id);
+    const priceList = await queryOne('SELECT * FROM price_lists WHERE id = $1', [req.params.id]);
     if (!priceList) {
       return res.status(404).json({ error: 'Price list not found' });
     }
 
-    const items = db.prepare(
-      'SELECT * FROM price_list_items WHERE price_list_id = ? ORDER BY category, part_number'
-    ).all(req.params.id);
+    const items = await query(
+      'SELECT * FROM price_list_items WHERE price_list_id = $1 ORDER BY category, part_number',
+      [req.params.id]
+    );
 
     // Parse applicable_models JSON for each item
     const parsedItems = items.map(item => ({
@@ -107,41 +108,43 @@ router.get('/:id', (req, res) => {
 });
 
 // GET /:id/items - Get items with optional search/filter
-router.get('/:id/items', (req, res) => {
+router.get('/:id/items', async (req, res) => {
   try {
-    const priceList = db.prepare('SELECT * FROM price_lists WHERE id = ?').get(req.params.id);
+    const priceList = await queryOne('SELECT * FROM price_lists WHERE id = $1', [req.params.id]);
     if (!priceList) {
       return res.status(404).json({ error: 'Price list not found' });
     }
 
     const { category, search, limit, offset } = req.query;
 
-    let sql = 'SELECT * FROM price_list_items WHERE price_list_id = ?';
+    let sql = 'SELECT * FROM price_list_items WHERE price_list_id = $1';
     const params = [req.params.id];
+    let paramIndex = 2;
 
     if (category) {
-      sql += ' AND category = ?';
+      sql += ` AND category = $${paramIndex++}`;
       params.push(category);
     }
 
     if (search) {
-      sql += ' AND (part_number LIKE ? OR description LIKE ?)';
+      sql += ` AND (part_number LIKE $${paramIndex} OR description LIKE $${paramIndex})`;
+      paramIndex++;
       const searchTerm = `%${search}%`;
-      params.push(searchTerm, searchTerm);
+      params.push(searchTerm);
     }
 
     sql += ' ORDER BY category, part_number';
 
     if (limit) {
-      sql += ' LIMIT ?';
+      sql += ` LIMIT $${paramIndex++}`;
       params.push(Number(limit));
       if (offset) {
-        sql += ' OFFSET ?';
+        sql += ` OFFSET $${paramIndex++}`;
         params.push(Number(offset));
       }
     }
 
-    const items = db.prepare(sql).all(...params);
+    const items = await query(sql, params);
 
     const parsedItems = items.map(item => ({
       ...item,
@@ -149,18 +152,21 @@ router.get('/:id/items', (req, res) => {
     }));
 
     // Get total count for pagination
-    let countSql = 'SELECT COUNT(*) as total FROM price_list_items WHERE price_list_id = ?';
+    let countSql = 'SELECT COUNT(*) as total FROM price_list_items WHERE price_list_id = $1';
     const countParams = [req.params.id];
+    let countParamIndex = 2;
     if (category) {
-      countSql += ' AND category = ?';
+      countSql += ` AND category = $${countParamIndex++}`;
       countParams.push(category);
     }
     if (search) {
-      countSql += ' AND (part_number LIKE ? OR description LIKE ?)';
+      countSql += ` AND (part_number LIKE $${countParamIndex} OR description LIKE $${countParamIndex})`;
+      countParamIndex++;
       const searchTerm = `%${search}%`;
-      countParams.push(searchTerm, searchTerm);
+      countParams.push(searchTerm);
     }
-    const { total } = db.prepare(countSql).get(...countParams);
+    const countRow = await queryOne(countSql, countParams);
+    const total = parseInt(countRow.total, 10);
 
     res.json({ items: parsedItems, total });
   } catch (err) {
@@ -170,7 +176,7 @@ router.get('/:id/items', (req, res) => {
 });
 
 // POST /upload - Upload and parse CSV/Excel file
-router.post('/upload', upload.single('file'), (req, res) => {
+router.post('/upload', upload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
@@ -223,28 +229,27 @@ router.post('/upload', upload.single('file'), (req, res) => {
     }
 
     // Create price list and items in a transaction
-    const insertResult = db.transaction(() => {
+    const client = await pool.connect();
+    let insertResult;
+    try {
+      await client.query('BEGIN');
+
       // Create the price_list record
-      const plResult = db.prepare(`
+      const plRes = await client.query(`
         INSERT INTO price_lists (name, description, file_name, file_path, effective_date, expiration_date)
-        VALUES (?, ?, ?, ?, ?, ?)
-      `).run(
+        VALUES ($1, $2, $3, $4, $5, $6) RETURNING id
+      `, [
         name || req.file.originalname,
         description || null,
         req.file.originalname,
         req.file.path,
         effective_date || null,
         expiration_date || null
-      );
+      ]);
 
-      const priceListId = plResult.lastInsertRowid;
+      const priceListId = plRes.rows[0].id;
 
       // Insert each row as a price_list_item
-      const insertItem = db.prepare(`
-        INSERT INTO price_list_items (price_list_id, part_number, description, category, unit_price, unit, applicable_models)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `);
-
       let inserted = 0;
       let skipped = 0;
       const errors = [];
@@ -287,7 +292,10 @@ router.post('/upload', upload.single('file'), (req, res) => {
         }
 
         try {
-          insertItem.run(
+          await client.query(`
+            INSERT INTO price_list_items (price_list_id, part_number, description, category, unit_price, unit, applicable_models)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+          `, [
             priceListId,
             String(item.part_number).trim(),
             item.description || null,
@@ -295,10 +303,10 @@ router.post('/upload', upload.single('file'), (req, res) => {
             unitPrice,
             item.unit || 'each',
             applicableModels
-          );
+          ]);
           inserted++;
         } catch (itemErr) {
-          if (itemErr.message.includes('UNIQUE constraint')) {
+          if (itemErr.message.includes('unique') || itemErr.message.includes('duplicate key')) {
             errors.push({ row: i + 2, part_number: item.part_number, issue: 'Duplicate part_number' });
             skipped++;
           } else {
@@ -307,10 +315,16 @@ router.post('/upload', upload.single('file'), (req, res) => {
         }
       }
 
-      return { priceListId, inserted, skipped, errors };
-    })();
+      await client.query('COMMIT');
+      insertResult = { priceListId, inserted, skipped, errors };
+    } catch (txErr) {
+      await client.query('ROLLBACK');
+      throw txErr;
+    } finally {
+      client.release();
+    }
 
-    const priceList = db.prepare('SELECT * FROM price_lists WHERE id = ?').get(insertResult.priceListId);
+    const priceList = await queryOne('SELECT * FROM price_lists WHERE id = $1', [insertResult.priceListId]);
 
     res.status(201).json({
       price_list: priceList,
@@ -329,9 +343,9 @@ router.post('/upload', upload.single('file'), (req, res) => {
 });
 
 // PUT /:id - Update price list metadata
-router.put('/:id', (req, res) => {
+router.put('/:id', async (req, res) => {
   try {
-    const existing = db.prepare('SELECT * FROM price_lists WHERE id = ?').get(req.params.id);
+    const existing = await queryOne('SELECT * FROM price_lists WHERE id = $1', [req.params.id]);
     if (!existing) {
       return res.status(404).json({ error: 'Price list not found' });
     }
@@ -339,10 +353,11 @@ router.put('/:id', (req, res) => {
     const fields = ['name', 'description', 'effective_date', 'expiration_date', 'status'];
     const updates = [];
     const values = [];
+    let paramIndex = 1;
 
     for (const field of fields) {
       if (req.body[field] !== undefined) {
-        updates.push(`${field} = ?`);
+        updates.push(`${field} = $${paramIndex++}`);
         values.push(req.body[field]);
       }
     }
@@ -352,9 +367,9 @@ router.put('/:id', (req, res) => {
     }
 
     values.push(req.params.id);
-    db.prepare(`UPDATE price_lists SET ${updates.join(', ')} WHERE id = ?`).run(...values);
+    await execute(`UPDATE price_lists SET ${updates.join(', ')} WHERE id = $${paramIndex}`, values);
 
-    const updated = db.prepare('SELECT * FROM price_lists WHERE id = ?').get(req.params.id);
+    const updated = await queryOne('SELECT * FROM price_lists WHERE id = $1', [req.params.id]);
     res.json(updated);
   } catch (err) {
     console.error('Error updating price list:', err);
@@ -363,11 +378,12 @@ router.put('/:id', (req, res) => {
 });
 
 // PUT /:id/items/:itemId - Update individual price list item
-router.put('/:id/items/:itemId', (req, res) => {
+router.put('/:id/items/:itemId', async (req, res) => {
   try {
-    const item = db.prepare(
-      'SELECT * FROM price_list_items WHERE id = ? AND price_list_id = ?'
-    ).get(req.params.itemId, req.params.id);
+    const item = await queryOne(
+      'SELECT * FROM price_list_items WHERE id = $1 AND price_list_id = $2',
+      [req.params.itemId, req.params.id]
+    );
 
     if (!item) {
       return res.status(404).json({ error: 'Price list item not found' });
@@ -376,6 +392,7 @@ router.put('/:id/items/:itemId', (req, res) => {
     const fields = ['part_number', 'description', 'category', 'subcategory', 'unit_price', 'unit', 'applicable_models', 'lead_time_days', 'notes'];
     const updates = [];
     const values = [];
+    let paramIndex = 1;
 
     for (const field of fields) {
       if (req.body[field] !== undefined) {
@@ -383,7 +400,7 @@ router.put('/:id/items/:itemId', (req, res) => {
         if (field === 'applicable_models' && Array.isArray(value)) {
           value = JSON.stringify(value);
         }
-        updates.push(`${field} = ?`);
+        updates.push(`${field} = $${paramIndex++}`);
         values.push(value);
       }
     }
@@ -393,9 +410,9 @@ router.put('/:id/items/:itemId', (req, res) => {
     }
 
     values.push(req.params.itemId);
-    db.prepare(`UPDATE price_list_items SET ${updates.join(', ')} WHERE id = ?`).run(...values);
+    await execute(`UPDATE price_list_items SET ${updates.join(', ')} WHERE id = $${paramIndex}`, values);
 
-    const updated = db.prepare('SELECT * FROM price_list_items WHERE id = ?').get(req.params.itemId);
+    const updated = await queryOne('SELECT * FROM price_list_items WHERE id = $1', [req.params.itemId]);
     if (updated.applicable_models) {
       updated.applicable_models = JSON.parse(updated.applicable_models);
     }
@@ -408,9 +425,9 @@ router.put('/:id/items/:itemId', (req, res) => {
 });
 
 // POST /:id/items - Add item manually
-router.post('/:id/items', (req, res) => {
+router.post('/:id/items', async (req, res) => {
   try {
-    const priceList = db.prepare('SELECT * FROM price_lists WHERE id = ?').get(req.params.id);
+    const priceList = await queryOne('SELECT * FROM price_lists WHERE id = $1', [req.params.id]);
     if (!priceList) {
       return res.status(404).json({ error: 'Price list not found' });
     }
@@ -428,10 +445,10 @@ router.post('/:id/items', (req, res) => {
         : applicable_models;
     }
 
-    const result = db.prepare(`
+    const inserted = await queryOne(`
       INSERT INTO price_list_items (price_list_id, part_number, description, category, subcategory, unit_price, unit, applicable_models, lead_time_days, notes)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id
+    `, [
       req.params.id,
       part_number,
       description || null,
@@ -442,16 +459,16 @@ router.post('/:id/items', (req, res) => {
       applicableModelsJson,
       lead_time_days || null,
       notes || null
-    );
+    ]);
 
-    const created = db.prepare('SELECT * FROM price_list_items WHERE id = ?').get(result.lastInsertRowid);
+    const created = await queryOne('SELECT * FROM price_list_items WHERE id = $1', [inserted.id]);
     if (created.applicable_models) {
       created.applicable_models = JSON.parse(created.applicable_models);
     }
 
     res.status(201).json(created);
   } catch (err) {
-    if (err.message.includes('UNIQUE constraint')) {
+    if (err.message.includes('unique') || err.message.includes('duplicate key')) {
       return res.status(409).json({ error: 'This part_number already exists in the price list' });
     }
     console.error('Error adding price list item:', err);
@@ -460,14 +477,14 @@ router.post('/:id/items', (req, res) => {
 });
 
 // DELETE /:id - Delete price list and all items (cascade)
-router.delete('/:id', (req, res) => {
+router.delete('/:id', async (req, res) => {
   try {
-    const existing = db.prepare('SELECT * FROM price_lists WHERE id = ?').get(req.params.id);
+    const existing = await queryOne('SELECT * FROM price_lists WHERE id = $1', [req.params.id]);
     if (!existing) {
       return res.status(404).json({ error: 'Price list not found' });
     }
 
-    db.prepare('DELETE FROM price_lists WHERE id = ?').run(req.params.id);
+    await execute('DELETE FROM price_lists WHERE id = $1', [req.params.id]);
 
     // Optionally remove the uploaded file
     if (existing.file_path && fs.existsSync(existing.file_path)) {

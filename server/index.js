@@ -7,9 +7,6 @@ const { initialize } = require('./database');
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Initialize database
-initialize();
-
 // Middleware
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(cors());
@@ -35,8 +32,16 @@ if (process.env.NODE_ENV === 'production') {
   });
 }
 
-app.listen(PORT, () => {
-  console.log(`PMtool server running on port ${PORT}`);
-});
+// Initialize database then start server
+initialize()
+  .then(() => {
+    app.listen(PORT, () => {
+      console.log(`PMtool server running on port ${PORT}`);
+    });
+  })
+  .catch(err => {
+    console.error('Database initialization failed:', err);
+    process.exit(1);
+  });
 
 module.exports = app;
