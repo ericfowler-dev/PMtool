@@ -1,7 +1,28 @@
 const { query, queryOne, execute, initialize } = require('./database');
 
+async function waitForDatabase(maxRetries = 15, initialDelay = 2000) {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      await queryOne('SELECT 1 AS ok');
+      console.log('Database connection established.');
+      return;
+    } catch (err) {
+      const delay = initialDelay * Math.min(attempt, 5);
+      console.log(`Database not ready (attempt ${attempt}/${maxRetries}): ${err.message}`);
+      if (attempt === maxRetries) {
+        throw new Error(`Could not connect to database after ${maxRetries} attempts`);
+      }
+      console.log(`Retrying in ${delay / 1000}s...`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+}
+
 async function seed() {
-  console.log('Initializing database...');
+  console.log('Waiting for database...');
+  await waitForDatabase();
+
+  console.log('Initializing database schema...');
   await initialize();
 
   // Check if already seeded

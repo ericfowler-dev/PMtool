@@ -9,8 +9,10 @@ services:
     name: pmtool
     runtime: node
     plan: free
+    nodeVersion: "20"
     buildCommand: npm install && npm run build
     startCommand: npm run seed && npm start
+    healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
         value: production
