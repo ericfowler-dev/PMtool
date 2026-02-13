@@ -10,7 +10,7 @@ services:
     runtime: node
     plan: free
     nodeVersion: "20"
-    buildCommand: npm install && npm run build
+    buildCommand: npm install && cd client && npm install --include=dev && cd .. && npm run build
     startCommand: npm run seed && npm start
     healthCheckPath: /api/health
     envVars:
