@@ -1,0 +1,7 @@
+part_number,description,category,unit_price,unit,applicable_models,lead_time_days,notes
+FLT-1001,Oil Filter,filters,18.50,each,PSI-8.8L-NG-150,7,Primary oil filter
+FLT-1020,Fuel Filter Cartridge,filters,24.75,each,"PSI-8.8L-NG-150;PSI-11.1L-NG-300",10,Use OEM equivalent
+FLD-2200,Engine Oil 15W-40,fluids,6.95,quart,all,3,Bulk pricing available
+BLT-3301,Accessory Drive Belt,belts,42.00,each,PSI-11.1L-NG-300,14,Inspect tension during install
+GST-4100,Valve Cover Gasket,gaskets,28.40,each,PSI-8.8L-NG-150,12,Replace on scheduled overhaul
+ELS-5005,Spark Plug,electrical,9.60,each,"PSI-8.8L-NG-150|PSI-11.1L-NG-300",5,Gap per OEM spec
