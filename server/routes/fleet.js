@@ -201,7 +201,7 @@ router.post('/:id/units', async (req, res) => {
       application_type || 'prime',
       resolvedAnnualHours,
       duty_cycle ?? 0.75,
-      fuel_type || 'natural_gas',
+      fuel_type || 'pipeline_ng',
       fuel_quality || 'pipeline',
       environment || 'normal',
       ambient_temp_min_f ?? 20,

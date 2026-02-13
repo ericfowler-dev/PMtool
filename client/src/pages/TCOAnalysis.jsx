@@ -45,6 +45,8 @@ export default function TCOAnalysis() {
   const [scenarioForm, setScenarioForm] = useState(emptyScenarioForm);
   const [results, setResults] = useState(null);
   const [configExpanded, setConfigExpanded] = useState(true);
+  const [assignPmModalOpen, setAssignPmModalOpen] = useState(false);
+  const [selectedPmScheduleId, setSelectedPmScheduleId] = useState('');
 
   const { data: scenarios } = useApiQuery('scenarios', () => api.scenarios.list());
   const { data: fleets } = useApiQuery('fleets', () => api.fleet.list());
@@ -82,6 +84,7 @@ export default function TCOAnalysis() {
   const priceListList = Array.isArray(priceLists) ? priceLists : [];
 
   const selectedScenario = scenarioQuery.data;
+  const selectedScenarioPmId = selectedScenario?.pm_schedule_id ?? selectedScenario?.schedule_id ?? '';
 
   const openCreateScenario = () => {
     setScenarioForm(emptyScenarioForm);
@@ -95,8 +98,9 @@ export default function TCOAnalysis() {
       payload[k] = typeof v === 'string' && !isNaN(v) && v !== '' && k !== 'name' ? Number(v) : v;
     });
     if (payload.fleet_id) payload.fleet_id = Number(payload.fleet_id);
-    if (payload.schedule_id) payload.schedule_id = Number(payload.schedule_id);
+    if (payload.schedule_id) payload.pm_schedule_id = Number(payload.schedule_id);
     if (payload.price_list_id) payload.price_list_id = Number(payload.price_list_id);
+    delete payload.schedule_id;
     createScenarioMutation.mutate(payload);
   };
 
@@ -109,6 +113,28 @@ export default function TCOAnalysis() {
     if (selectedScenarioId) {
       calculateMutation.mutate(selectedScenarioId);
     }
+  };
+
+  const openAssignPmModal = () => {
+    setSelectedPmScheduleId(selectedScenarioPmId ? String(selectedScenarioPmId) : '');
+    setAssignPmModalOpen(true);
+  };
+
+  const handleAssignPmSchedule = (e) => {
+    e.preventDefault();
+    if (!selectedScenarioId) return;
+
+    updateScenarioMutation.mutate(
+      {
+        id: selectedScenarioId,
+        data: {
+          pm_schedule_id: selectedPmScheduleId ? Number(selectedPmScheduleId) : null,
+        },
+      },
+      {
+        onSuccess: () => setAssignPmModalOpen(false),
+      }
+    );
   };
 
   const updateField = (field, value) => setScenarioForm((prev) => ({ ...prev, [field]: value }));
@@ -211,7 +237,7 @@ export default function TCOAnalysis() {
               </div>
               <div className="bg-gray-50 rounded-lg p-3">
                 <span className="text-xs text-gray-500">PM Schedule</span>
-                <p className="font-medium text-gray-900 truncate">{scheduleList.find((s) => s.id === selectedScenario.schedule_id)?.name || '-'}</p>
+                <p className="font-medium text-gray-900 truncate">{scheduleList.find((s) => s.id === selectedScenarioPmId)?.name || '-'}</p>
               </div>
               <div className="bg-gray-50 rounded-lg p-3">
                 <span className="text-xs text-gray-500">Price List</span>
@@ -247,6 +273,17 @@ export default function TCOAnalysis() {
               </div>
             </div>
 
+            {!selectedScenarioPmId && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p>
+                    No PM Schedule is selected for this scenario. Analysis will run with <strong>zero PM task costs</strong> until you assign one.
+                  </p>
+                  <button type="button" onClick={openAssignPmModal} className="btn btn-ghost btn-sm">Assign PM Schedule</button>
+                </div>
+              </div>
+            )}
+
             <div className="flex items-center gap-3 pt-2">
               <button
                 onClick={handleRunAnalysis}
@@ -273,9 +310,12 @@ export default function TCOAnalysis() {
       {calculateMutation.isError && (
         <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-start gap-3">
           <AlertTriangle size={20} className="text-red-500 flex-shrink-0 mt-0.5" />
-          <div>
+          <div className="space-y-2">
             <p className="text-sm font-medium text-red-800">Analysis Failed</p>
             <p className="text-sm text-red-600 mt-0.5">{calculateMutation.error?.message || 'An error occurred while running the analysis.'}</p>
+            {calculateMutation.error?.message?.toLowerCase().includes('pm schedule') && (
+              <button type="button" onClick={openAssignPmModal} className="btn btn-ghost btn-sm">Assign PM Schedule</button>
+            )}
           </div>
         </div>
       )}
@@ -440,6 +480,27 @@ export default function TCOAnalysis() {
         </div>
       )}
 
+      <Modal open={assignPmModalOpen} onClose={() => setAssignPmModalOpen(false)} title="Assign PM Schedule" size="sm">
+        <form onSubmit={handleAssignPmSchedule} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">PM Schedule</label>
+            <select className="input" value={selectedPmScheduleId} onChange={(e) => setSelectedPmScheduleId(e.target.value)}>
+              <option value="">No PM Schedule</option>
+              {scheduleList.map((schedule) => (
+                <option key={schedule.id} value={schedule.id}>{schedule.name}</option>
+              ))}
+            </select>
+            <p className="mt-1 text-xs text-gray-500">Tip: Create schedules in PM Planner, then assign them here.</p>
+          </div>
+          <div className="flex justify-end gap-3">
+            <button type="button" className="btn btn-ghost" onClick={() => setAssignPmModalOpen(false)}>Cancel</button>
+            <button type="submit" className="btn btn-primary" disabled={updateScenarioMutation.isPending}>
+              {updateScenarioMutation.isPending ? 'Saving...' : 'Save PM Schedule'}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
       {/* Create Scenario Modal */}
       <Modal open={scenarioModalOpen} onClose={() => setScenarioModalOpen(false)} title="New Analysis Scenario" size="lg">
         <form onSubmit={handleCreateScenario} className="space-y-5">
@@ -465,6 +526,7 @@ export default function TCOAnalysis() {
                   <option key={s.id} value={s.id}>{s.name}</option>
                 ))}
               </select>
+              <p className="mt-1 text-xs text-gray-500">Create schedules in PM Planner, then select one here to apply PM tasks/costs to this scenario.</p>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Price List</label>

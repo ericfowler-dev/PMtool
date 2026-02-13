@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { DollarSign, Plus, Pencil, Trash2, ChevronRight, AlertTriangle, Search, Check, X, Package } from 'lucide-react';
+import { DollarSign, Plus, Pencil, Trash2, ChevronRight, AlertTriangle, Search, Check, X, Package, Download } from 'lucide-react';
 import DataTable from '../components/DataTable';
 import Modal from '../components/Modal';
 import FileUpload from '../components/FileUpload';
@@ -222,8 +222,21 @@ export default function PriceLists() {
       </div>
 
       {/* Upload Section */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5 space-y-4">
         <FileUpload onUpload={handleUpload} label="Upload Price List (CSV or Excel)" />
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
+          <div>
+            <p className="text-sm font-medium text-gray-800">Need a starter format?</p>
+            <p className="text-xs text-gray-500">Download the sample parts list template and replace with your parts and pricing.</p>
+          </div>
+          <a
+            href="/samples/parts-list-sample.csv"
+            download
+            className="btn btn-ghost btn-sm inline-flex items-center justify-center"
+          >
+            <Download size={14} className="mr-1" /> Download Sample CSV
+          </a>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">

@@ -201,6 +201,7 @@ export default function PMPlanner() {
           <div>
             <h1 className="text-2xl font-bold text-gray-900">PM Schedule Planner</h1>
             <p className="text-sm text-gray-500">Design and manage preventive maintenance schedules</p>
+            <p className="text-xs text-gray-400 mt-1">After creating a schedule here, assign it to a fleet in <strong>TCO Analysis → New Analysis Scenario</strong>.</p>
           </div>
         </div>
         <button onClick={openCreateSchedule} className="btn btn-primary">

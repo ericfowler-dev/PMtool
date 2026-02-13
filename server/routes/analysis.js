@@ -518,10 +518,6 @@ router.post('/calculate', async (req, res) => {
       return res.status(400).json({ error: 'Scenario has no fleet assigned' });
     }
 
-    if (!data.scenario.pm_schedule_id) {
-      return res.status(400).json({ error: 'Scenario has no PM schedule assigned' });
-    }
-
     if (data.fleetUnits.length === 0) {
       return res.status(400).json({ error: 'Fleet has no units' });
     }
@@ -556,10 +552,10 @@ router.post('/compare', async (req, res) => {
         continue;
       }
 
-      if (!data.scenario.fleet_id || !data.scenario.pm_schedule_id || data.fleetUnits.length === 0) {
+      if (!data.scenario.fleet_id || data.fleetUnits.length === 0) {
         errors.push({
           scenario_id: scenarioId,
-          error: 'Scenario is incomplete (missing fleet, PM schedule, or fleet has no units)'
+          error: 'Scenario is incomplete (missing fleet or fleet has no units)'
         });
         continue;
       }
@@ -706,7 +702,7 @@ router.post('/quick-calculate', async (req, res) => {
           application_type: iu.application_type || 'prime',
           annual_hours: iu.annual_hours || null,
           duty_cycle: iu.duty_cycle ?? 0.75,
-          fuel_type: iu.fuel_type || 'natural_gas',
+          fuel_type: iu.fuel_type || 'pipeline_ng',
           fuel_quality: iu.fuel_quality || 'pipeline',
           environment: iu.environment || 'normal',
           commissioning_rate_per_month: iu.commissioning_rate_per_month ?? 1,

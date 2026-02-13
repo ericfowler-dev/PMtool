@@ -5,7 +5,13 @@ import Modal from '../components/Modal';
 import { api } from '../api';
 import { useApiQuery, useApiMutation } from '../hooks/useApi';
 
-const FUEL_TYPES = ['diesel', 'natural_gas', 'biogas', 'hfo', 'dual_fuel'];
+const FUEL_TYPES = [
+  { value: 'pipeline_ng', label: 'Pipeline NG' },
+  { value: 'field_gas_ng', label: 'Field Gas NG' },
+  { value: 'lp', label: 'LP' },
+  { value: 'gasoline', label: 'Gasoline' },
+  { value: 'diesel', label: 'Diesel' },
+];
 const FUEL_QUALITY = ['premium', 'standard', 'low_grade'];
 const ENVIRONMENTS = ['clean', 'dusty', 'coastal', 'humid', 'extreme_heat', 'extreme_cold'];
 const APPLICATION_TYPES = ['standby', 'prime', 'ltp', 'continuous'];
@@ -17,7 +23,7 @@ const emptyUnitForm = {
   application_type: 'prime',
   annual_hours: 4000,
   duty_cycle: 80,
-  fuel_type: 'diesel',
+  fuel_type: 'pipeline_ng',
   fuel_quality: 'standard',
   environment: 'clean',
   ambient_temp_min: -10,
@@ -114,7 +120,7 @@ export default function FleetManager() {
       application_type: unit.application_type || 'prime',
       annual_hours: unit.annual_hours || 4000,
       duty_cycle: unit.duty_cycle || 80,
-      fuel_type: unit.fuel_type || 'diesel',
+      fuel_type: unit.fuel_type || 'pipeline_ng',
       fuel_quality: unit.fuel_quality || 'standard',
       environment: unit.environment || 'clean',
       ambient_temp_min: unit.ambient_temp_min ?? -10,
@@ -179,6 +185,14 @@ export default function FleetManager() {
     return model?.model_number || 'Unknown';
   };
 
+  const formatFuelType = (fuelType) => {
+    const match = FUEL_TYPES.find((type) => type.value === fuelType);
+    if (match) return match.label;
+    return String(fuelType || '')
+      .replace(/_/g, ' ')
+      .replace(/\b\w/g, (char) => char.toUpperCase());
+  };
+
   const unitColumns = [
     { key: 'unit_name', header: 'Unit Name', accessor: 'unit_name' },
     {
@@ -198,7 +212,12 @@ export default function FleetManager() {
     },
     { key: 'annual_hours', header: 'Annual Hours', accessor: 'annual_hours', render: (row) => <span className="font-mono text-sm">{new Intl.NumberFormat('en-US').format(row.annual_hours)}</span> },
     { key: 'duty_cycle', header: 'Duty Cycle', accessor: 'duty_cycle', render: (row) => `${row.duty_cycle}%` },
-    { key: 'fuel_type', header: 'Fuel', accessor: 'fuel_type' },
+    {
+      key: 'fuel_type',
+      header: 'Fuel',
+      accessor: 'fuel_type',
+      render: (row) => formatFuelType(row.fuel_type),
+    },
     { key: 'environment', header: 'Environment', accessor: 'environment' },
     { key: 'quantity', header: 'Qty', accessor: 'quantity' },
     {
@@ -335,6 +354,15 @@ export default function FleetManager() {
                 emptyMessage="No units in this fleet. Click 'Add Unit' to configure generator units."
                 pageSize={10}
               />
+
+              <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3">
+                <p className="text-sm font-medium text-blue-900">How PM schedules connect to fleets</p>
+                <p className="text-xs text-blue-800 mt-1">
+                  PM schedules are created in <strong>PM Planner</strong> and assigned when creating or editing an
+                  <strong> Analysis Scenario</strong> in <strong>TCO Analysis</strong>. Fleet units store operating context
+                  (hours, fuel, environment), while PM tasks come from the selected schedule.
+                </p>
+              </div>
             </div>
           )}
         </div>
@@ -401,7 +429,7 @@ export default function FleetManager() {
               <label className="block text-sm font-medium text-gray-700 mb-1">Fuel Type</label>
               <select className="input" value={unitForm.fuel_type} onChange={(e) => setUnitForm((f) => ({ ...f, fuel_type: e.target.value }))}>
                 {FUEL_TYPES.map((t) => (
-                  <option key={t} value={t}>{t.replace('_', ' ')}</option>
+                  <option key={t.value} value={t.value}>{t.label}</option>
                 ))}
               </select>
             </div>
